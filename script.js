@@ -198,7 +198,8 @@ async function countLinesInFile(owner, repo, file, stats) {
     stats.byExtension[fileExtension].lines += lines;
   } catch (error) {
     console.warn(`Could not process file ${filePath}: ${error.message}`);
-    stats.filesSkipped++;
+    stats.numFilesSkipped++;
+    stats.filesSkipped.push(filePath);
   }
 }
 
