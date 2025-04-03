@@ -13,6 +13,27 @@
       <div id="currentRepo">No GitHub repository detected</div>
     </div>
 
+    <div class="settings-section">
+      <h3>GitHub Authentication</h3>
+      <p class="info-text">
+        Authenticate to increase API rate limits (recommended)
+      </p>
+
+      <div class="token-input">
+        <input
+          type="password"
+          id="githubToken"
+          placeholder="GitHub Personal Access Token"
+        />
+        <button id="saveToken">Save Token</button>
+      </div>
+
+      <div id="auth-status" class="auth-status">
+        <span class="status-circle unauthenticated"></span>
+        <span id="auth-text">Not authenticated</span>
+      </div>
+    </div>
+
     <button id="countLoc" disabled>Count Lines of Code</button>
 
     <div id="loading" class="loading">

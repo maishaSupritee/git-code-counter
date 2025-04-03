@@ -55,6 +55,56 @@ function getHeaders() {
   return headers;
 }
 
+// Save token to Chrome storage
+function saveToken(token) {
+  chrome.storage.local.set({ github_token: token }, function () {
+    console.log("Token saved");
+    updateAuthStatus(true);
+  });
+}
+
+// Load token from Chrome storage
+function loadToken() {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(["github_token"], function (result) {
+      if (result.github_token) {
+        setGitHubToken(result.github_token);
+        updateAuthStatus(true);
+        resolve(true);
+      } else {
+        updateAuthStatus(false);
+        resolve(false);
+      }
+    });
+  });
+}
+
+// Update UI to show authentication status
+function updateAuthStatus(isAuthenticated) {
+  const statusCircle = document.querySelector(".status-circle");
+  const authText = document.getElementById("auth-text");
+
+  if (isAuthenticated) {
+    statusCircle.classList.remove("unauthenticated");
+    statusCircle.classList.add("authenticated");
+    authText.textContent = "Authenticated";
+  } else {
+    statusCircle.classList.remove("authenticated");
+    statusCircle.classList.add("unauthenticated");
+    authText.textContent = "Not authenticated";
+  }
+}
+
+// Clear token from storage
+function clearToken() {
+  chrome.storage.local.remove(["github_token"], function () {
+    console.log("Token cleared");
+    setGitHubToken("");
+    updateAuthStatus(false);
+  });
+}
+
+// Function to fetch repository data from GitHub API
 async function fetchGithubRepoData(owner, repo) {
   // Check cache first
   const cacheKey = `repo_${owner}_${repo}`;
@@ -166,7 +216,11 @@ async function countLinesInFile(owner, repo, file, stats) {
   const fileExtension = getFileExtension(filePath);
 
   // Skip binary files and large files
-  if (isBinaryExtension(fileExtension) || file.size > 1000000) {
+  if (
+    isBinaryExtension(fileExtension) ||
+    file.size > 1000000 ||
+    fileExtension === "no-extension"
+  ) {
     stats.numFilesSkipped++;
     stats.filesSkipped.push(filePath);
     return;
@@ -213,6 +267,7 @@ function getFileExtension(filePath) {
 
 function isBinaryExtension(extension) {
   const binaryExtensions = [
+    "svg",
     "png",
     "jpg",
     "jpeg",
@@ -302,7 +357,7 @@ function analyzeRepository(owner, repo, token = null) {
   }
 
   fetchGithubRepoData(owner, repo)
-    .then((repoData) => {
+    .then(() => {
       countLinesOfCode(owner, repo);
     })
     .catch((error) => {
@@ -402,7 +457,10 @@ function displayStats(stats) {
 
 // Fix the main DOM loaded handler
 document.addEventListener("DOMContentLoaded", () => {
-  // Get UI elements
+  // Get UI elements for token management
+  const tokenInput = document.getElementById("githubToken");
+  const saveTokenButton = document.getElementById("saveToken");
+
   const button = document.getElementById("countLoc");
   const currentRepoDiv = document.getElementById("currentRepo");
   const loadingDiv = document.getElementById("loading");
@@ -413,6 +471,22 @@ document.addEventListener("DOMContentLoaded", () => {
   if (loadingDiv) loadingDiv.style.display = "none";
   if (resultsDiv) resultsDiv.style.display = "none";
   if (errorDiv) errorDiv.style.display = "none";
+
+  // Load token from storage
+  loadToken();
+
+  // Add token save button handler
+  if (saveTokenButton) {
+    saveTokenButton.addEventListener("click", () => {
+      const token = tokenInput.value.trim();
+      if (token) {
+        saveToken(token);
+        tokenInput.value = ""; // Clear input field after saving
+      } else {
+        clearToken();
+      }
+    });
+  }
 
   // Check if we're on a GitHub repository page
   const detectGitHubRepo = async () => {

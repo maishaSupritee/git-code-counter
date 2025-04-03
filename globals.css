@@ -1,7 +1,11 @@
+html {
+  border-radius: 8px;
+}
 body {
-  width: 300px;
+  width: 350px;
   padding: 10px;
   font-family: Arial, sans-serif;
+  border-radius: 8px;
 }
 .header {
   display: flex;
@@ -68,9 +72,70 @@ button:disabled {
   display: none;
   margin-top: 5px;
 }
-.totalLinesDiv {
-  padding: 2px;
+#totalLinesDiv {
+  padding: 10px;
   background-color: #94d3a2;
-  border-radius: 2;
+  border-radius: 6px;
   color: black;
+  font-size: 14px;
+  font-weight: bold;
+}
+
+.settings-section {
+  background-color: #f5f5f5;
+  padding: 15px;
+  margin: 10px 0;
+  border-radius: 5px;
+}
+
+.info-text {
+  font-size: 12px;
+  color: #666;
+  margin-bottom: 10px;
+}
+
+.token-input {
+  display: flex;
+  margin-bottom: 10px;
+}
+
+.token-input input {
+  flex-grow: 1;
+  padding: 8px;
+  border: 1px solid #ddd;
+  border-radius: 4px 0 0 4px;
+}
+
+.token-input button {
+  padding: 8px 12px;
+  background-color: #0366d6;
+  color: white;
+  border: none;
+  border-radius: 0 4px 4px 0;
+  cursor: pointer;
+}
+
+.token-input button:hover {
+  background-color: #0255b3;
+}
+
+.auth-status {
+  display: flex;
+  align-items: center;
+  font-size: 12px;
+}
+
+.status-circle {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 5px;
+}
+
+.authenticated {
+  background-color: #2cbb5d;
+}
+
+.unauthenticated {
+  background-color: #cb2431;
 }
