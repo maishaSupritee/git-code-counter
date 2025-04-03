@@ -1,12 +1,54 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
   <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Git Code Counter</title>
+    <title>GitHub Code Counter</title>
+    <link rel="stylesheet" href="globals.css" />
   </head>
   <body>
-    <h2>Git Code Counter</h2>
+    <div class="header">
+      <h2>GitHub Code Counter</h2>
+    </div>
+
+    <div class="repo-info">
+      <div id="currentRepo">No GitHub repository detected</div>
+    </div>
+
+    <button id="countLoc" disabled>Count Lines of Code</button>
+
+    <div id="loading" class="loading">
+      <p>Analyzing repository... <span id="progress-text">0%</span></p>
+      <div class="progress">
+        <div id="progress-bar" class="progress-bar"></div>
+      </div>
+    </div>
+
+    <div id="error" class="error"></div>
+
+    <div id="results" class="results">
+      <h3>Repository Statistics</h3>
+      <div class="stat">
+        <span>Total Files:</span>
+        <span id="totalFiles">0</span>
+      </div>
+      <div class="stat">
+        <span>Total Lines:</span>
+        <span id="totalLines">0</span>
+      </div>
+      <div class="stat">
+        <span>Total files skipped:</span>
+        <span id="totalSkippedFiles">0</span>
+      </div>
+      <div class="stat">
+        <span>Skipped Files:</span>
+        <ul id="skippedFiles">
+          <li>None</li>
+        </ul>
+      </div>
+
+      <h3>By Extension</h3>
+      <div id="extensions" class="extensions"></div>
+    </div>
+
+    <script src="script.js"></script>
   </body>
-  <script src="script.js"></script>
 </html>

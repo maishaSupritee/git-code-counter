@@ -89,7 +89,7 @@ async function fetchGithubRepoData(owner, repo) {
   return data;
 }
 
-async function countLinesOfCode(owner, repo, repoData) {
+async function countLinesOfCode(owner, repo) {
   const stats = {
     totalLines: 0,
     totalFiles: 0,
@@ -98,7 +98,7 @@ async function countLinesOfCode(owner, repo, repoData) {
     filesSkipped: [],
   };
   try {
-    console.log(repoData);
+    const repoData = await fetchGithubRepoData(owner, repo);
     const defaultBranch = repoData.default_branch;
 
     // Getting root tree - check cache first
@@ -202,22 +202,6 @@ async function countLinesInFile(owner, repo, file, stats) {
   }
 }
 
-function updateProgress(processedFiles, totalFiles) {
-  // You can implement this function based on your UI needs
-  console.log(`Processing: ${processedFiles}/${totalFiles} files`);
-}
-
-function displayStats(stats) {
-  console.log("Total Lines of Code:", stats.totalLines);
-  console.log("Total Files Processed:", stats.totalFiles);
-  console.log("Number of Files Skipped:", stats.numFilesSkipped);
-  console.log("Skipped Files:", stats.filesSkipped.join(", "));
-  console.log("Lines by Extension:");
-  for (const [extension, data] of Object.entries(stats.byExtension)) {
-    console.log(`.${extension}: ${data.lines} lines in ${data.files} files`);
-  }
-}
-
 function getFileExtension(filePath) {
   const parts = filePath.split(".");
   if (parts.length > 1) {
@@ -290,11 +274,6 @@ async function getFileContent(owner, repo, sha) {
   return decodedContent;
 }
 
-function showError(message) {
-  console.error(message);
-  alert(message);
-}
-
 // Function to set authentication token
 function setGitHubToken(token) {
   if (token && token.trim() !== "") {
@@ -323,11 +302,183 @@ function analyzeRepository(owner, repo, token = null) {
 
   fetchGithubRepoData(owner, repo)
     .then((repoData) => {
-      countLinesOfCode(owner, repo, repoData);
+      countLinesOfCode(owner, repo);
     })
     .catch((error) => {
       showError(`Error fetching repository data: ${error.message}`);
     });
+}
+
+function updateProgress(processedFiles, totalFiles) {
+  console.log(`Processing: ${processedFiles}/${totalFiles} files`);
+
+  const progressBar = document.getElementById("progress-bar");
+  const progressText = document.getElementById("progress-text");
+
+  if (progressBar && progressText) {
+    const percentage = Math.round((processedFiles / totalFiles) * 100);
+    progressBar.style.width = `${percentage}%`;
+    progressText.textContent = `${percentage}% (${processedFiles}/${totalFiles} files)`;
+  }
+}
+
+// Fix the display stats function
+function displayStats(stats) {
+  console.log("Total Lines of Code:", stats.totalLines);
+  console.log("Total Files Processed:", stats.totalFiles);
+  console.log("Number of Files Skipped:", stats.numFilesSkipped);
+  console.log("Lines by Extension:");
+
+  // Get UI elements
+  const resultsDiv = document.getElementById("results");
+  const loadingDiv = document.getElementById("loading");
+  const totalLinesSpan = document.getElementById("totalLines");
+  const totalFilesSpan = document.getElementById("totalFiles");
+  const totalSkippedFilesSpan = document.getElementById("totalSkippedFiles");
+  const skippedFilesList = document.getElementById("skippedFiles");
+  const extensionsDiv = document.getElementById("extensions");
+
+  // Update UI with stats
+  if (totalLinesSpan)
+    totalLinesSpan.textContent = stats.totalLines.toLocaleString();
+  if (totalFilesSpan)
+    totalFilesSpan.textContent = stats.totalFiles.toLocaleString();
+  if (totalSkippedFilesSpan)
+    totalSkippedFilesSpan.textContent = stats.numFilesSkipped.toLocaleString();
+
+  // Update skipped files list
+  if (skippedFilesList) {
+    skippedFilesList.innerHTML = "";
+    if (stats.filesSkipped.length > 0) {
+      // Only show first 10 skipped files to avoid overflow
+      const filesToShow = stats.filesSkipped.slice(0, 10);
+      filesToShow.forEach((file) => {
+        const li = document.createElement("li");
+        li.textContent = file;
+        skippedFilesList.appendChild(li);
+      });
+
+      // Add indicator if there are more skipped files
+      if (stats.filesSkipped.length > 10) {
+        const li = document.createElement("li");
+        li.textContent = `...and ${stats.filesSkipped.length - 10} more`;
+        skippedFilesList.appendChild(li);
+      }
+    } else {
+      const li = document.createElement("li");
+      li.textContent = "None";
+      skippedFilesList.appendChild(li);
+    }
+  }
+
+  // Update extensions breakdown
+  if (extensionsDiv) {
+    extensionsDiv.innerHTML = "";
+
+    // Sort extensions by number of lines
+    const sortedExtensions = Object.entries(stats.byExtension).sort(
+      (a, b) => b[1].lines - a[1].lines
+    );
+
+    sortedExtensions.forEach(([ext, data]) => {
+      const percentage = ((data.lines / stats.totalLines) * 100).toFixed(1);
+
+      const row = document.createElement("div");
+      row.className = "extension-row";
+      row.innerHTML = `
+          <span>${ext}</span>
+          <span>${data.files.toLocaleString()} files, ${data.lines.toLocaleString()} lines (${percentage}%)</span>
+        `;
+
+      extensionsDiv.appendChild(row);
+    });
+  }
+
+  // Show results and hide loading
+  if (loadingDiv) loadingDiv.style.display = "none";
+  if (resultsDiv) resultsDiv.style.display = "block";
+}
+
+// Fix the main DOM loaded handler
+document.addEventListener("DOMContentLoaded", () => {
+  // Get UI elements
+  const button = document.getElementById("countLoc");
+  const currentRepoDiv = document.getElementById("currentRepo");
+  const loadingDiv = document.getElementById("loading");
+  const resultsDiv = document.getElementById("results");
+  const errorDiv = document.getElementById("error");
+
+  // Initially hide results and loading
+  if (loadingDiv) loadingDiv.style.display = "none";
+  if (resultsDiv) resultsDiv.style.display = "none";
+  if (errorDiv) errorDiv.style.display = "none";
+
+  // Check if we're on a GitHub repository page
+  const detectGitHubRepo = async () => {
+    try {
+      // Get current active tab
+      const [tab] = await chrome.tabs.query({
+        active: true,
+        currentWindow: true,
+      });
+
+      console.log("Current URL:", tab.url); // Debug log
+
+      // Extract owner/repo from GitHub URL
+      const match = tab.url.match(/^https:\/\/github\.com\/([^\/]+)\/([^\/]+)/);
+
+      if (match) {
+        const [_, owner, repo] = match;
+        console.log(`Detected repo: ${owner}/${repo}`); // Debug log
+
+        // Update UI
+        if (currentRepoDiv)
+          currentRepoDiv.textContent = `Repository: ${owner}/${repo}`;
+        if (button) {
+          button.disabled = false;
+
+          // Add click handler
+          button.addEventListener("click", () => {
+            // Show loading state
+            if (loadingDiv) loadingDiv.style.display = "block";
+            if (resultsDiv) resultsDiv.style.display = "none";
+            if (errorDiv) errorDiv.style.display = "none";
+
+            // Analyze the repository
+            analyzeRepository(owner, repo);
+          });
+        }
+      } else {
+        console.log("No GitHub repository detected in URL"); // Debug log
+      }
+    } catch (error) {
+      console.error("Error detecting repository:", error);
+      if (errorDiv) {
+        errorDiv.style.display = "block";
+        errorDiv.textContent = `Error: ${error.message}`;
+      }
+    }
+  };
+
+  // Start the detection process
+  detectGitHubRepo();
+});
+
+// Update showError function to use the UI
+function showError(message) {
+  console.error(message);
+
+  const errorDiv = document.getElementById("error");
+  const loadingDiv = document.getElementById("loading");
+
+  if (errorDiv) {
+    errorDiv.textContent = message;
+    errorDiv.style.display = "block";
+  }
+
+  if (loadingDiv) {
+    loadingDiv.style.display = "none";
+  }
 }
 
 // Example usage:
