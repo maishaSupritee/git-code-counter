@@ -1,55 +1,98 @@
-// Configuration for authentication and caching
 const config = {
-  // GitHub authentication tokens
   github: {
-    token: "", // Personal access token
-    useAuth: false, // Set to true when token is provided
+    token: "",
+    useAuth: false,
   },
-  // Cache configuration
   cache: {
     enabled: true,
-    expirationMs: 3600000, // Cache expiration time (1 hour)
-    storage: {}, // In-memory cache storage
   },
 };
 
-// Utility for cache management
+//CACHING
 const cacheManager = {
+  // Cache expiration time (1 hour in milliseconds)
+  expirationMs: 3600000,
+
+  // Get data from cache
   get: function (key) {
-    if (!config.cache.enabled) return null;
+    return new Promise((resolve) => {
+      chrome.storage.local.get([key], (result) => {
+        if (!result[key]) {
+          resolve(null); // Return null if no cache found
+          return;
+        }
 
-    const cachedItem = config.cache.storage[key];
-    if (!cachedItem) return null;
+        const cachedItem = result[key];
 
-    // Check if cache has expired
-    if (Date.now() - cachedItem.timestamp > config.cache.expirationMs) {
-      delete config.cache.storage[key];
-      return null;
-    }
+        // Check if cache has expired
+        if (Date.now() - cachedItem.timestamp > this.expirationMs) {
+          this.remove(key);
+          resolve(null);
+          return;
+        }
 
-    console.log(`Cache hit: ${key}`);
-    return cachedItem.data;
+        console.log(`Cache hit: ${key}`);
+        resolve(cachedItem.data);
+      });
+    });
   },
 
+  // Save data to cache
   set: function (key, data) {
-    if (!config.cache.enabled) return;
-
-    config.cache.storage[key] = {
+    const cacheItem = {
       timestamp: Date.now(),
       data: data,
     };
-    console.log(`Cached: ${key}`);
+
+    return new Promise((resolve) => {
+      chrome.storage.local.set({ [key]: cacheItem }, () => {
+        console.log(`Cached: ${key}`);
+        resolve();
+      });
+    });
+  },
+
+  // Remove item from cache
+  remove: function (key) {
+    return new Promise((resolve) => {
+      chrome.storage.local.remove([key], () => {
+        console.log(`Cache removed: ${key}`);
+        resolve();
+      });
+    });
+  },
+
+  // Clear entire cache
+  clear: function () {
+    return new Promise((resolve) => {
+      chrome.storage.local.get(null, (items) => {
+        // Filter only cache items
+        const cacheKeys = Object.keys(items).filter(
+          (key) => key.startsWith("cache_") //prefix for cache keys
+        );
+
+        if (cacheKeys.length > 0) {
+          chrome.storage.local.remove(cacheKeys, () => {
+            console.log("Cache cleared");
+            resolve();
+          });
+        } else {
+          resolve(); // No cache items to clear
+        }
+      });
+    });
   },
 };
 
+//AUTHENTICATION
 // Configure authentication for fetch requests
 function getHeaders() {
   const headers = {
-    Accept: "application/vnd.github+json",
+    Accept: "application/vnd.github+json", // Set the Accept header for GitHub API
   };
 
   if (config.github.useAuth && config.github.token) {
-    headers["Authorization"] = `token ${config.github.token}`;
+    headers["Authorization"] = `token ${config.github.token}`; // Add token if available
   }
 
   return headers;
@@ -59,7 +102,10 @@ function getHeaders() {
 function saveToken(token) {
   chrome.storage.local.set({ github_token: token }, function () {
     console.log("Token saved");
+    setGitHubToken(token);
     updateAuthStatus(true);
+    // Update rate limit display after authentication changes
+    updateRateLimitDisplay();
   });
 }
 
@@ -70,12 +116,40 @@ function loadToken() {
       if (result.github_token) {
         setGitHubToken(result.github_token);
         updateAuthStatus(true);
+        // Update rate limit display after authentication is loaded
+        updateRateLimitDisplay();
         resolve(true);
       } else {
         updateAuthStatus(false);
+        // Update rate limit display even if not authenticated
+        updateRateLimitDisplay();
         resolve(false);
       }
     });
+  });
+}
+// Function to set authentication token
+function setGitHubToken(token) {
+  if (token && token.trim() !== "") {
+    config.github.token = token;
+    config.github.useAuth = true;
+    console.log("GitHub authentication enabled");
+    return true;
+  } else {
+    config.github.useAuth = false;
+    console.log("GitHub authentication disabled");
+    return false;
+  }
+}
+
+// Clear token from storage
+function clearToken() {
+  chrome.storage.local.remove(["github_token"], function () {
+    console.log("Token cleared");
+    setGitHubToken("");
+    updateAuthStatus(false);
+    // Update rate limit display after authentication is removed
+    updateRateLimitDisplay();
   });
 }
 
@@ -95,25 +169,21 @@ function updateAuthStatus(isAuthenticated) {
   }
 }
 
-// Clear token from storage
-function clearToken() {
-  chrome.storage.local.remove(["github_token"], function () {
-    console.log("Token cleared");
-    setGitHubToken("");
-    updateAuthStatus(false);
-  });
-}
-
-// Function to fetch repository data from GitHub API
+// FETCHING REPO DATA AND COUNTING LINES OF CODE
 async function fetchGithubRepoData(owner, repo) {
+  // all cache keys will be prefixed with "cache_"
+  const cacheKey = `cache_repo_${owner}_${repo}`;
+
   // Check cache first
-  const cacheKey = `repo_${owner}_${repo}`;
-  const cachedData = cacheManager.get(cacheKey);
+  const cachedData = await cacheManager.get(cacheKey);
   if (cachedData) return cachedData;
 
   // Make API request if not in cache
   const url = `https://api.github.com/repos/${owner}/${repo}`;
   const response = await fetch(url, { headers: getHeaders() });
+
+  // Update rate limit display after API call
+  updateRateLimitDisplay();
 
   if (!response.ok) {
     // Handle rate limiting specifically
@@ -134,7 +204,7 @@ async function fetchGithubRepoData(owner, repo) {
   const data = await response.json();
 
   // Cache the result
-  cacheManager.set(cacheKey, data);
+  await cacheManager.set(cacheKey, data);
 
   return data;
 }
@@ -152,35 +222,42 @@ async function countLinesOfCode(owner, repo) {
     const defaultBranch = repoData.default_branch;
 
     // Getting root tree - check cache first
-    const treeCacheKey = `tree_${owner}_${repo}_${defaultBranch}`;
-    let treeData = cacheManager.get(treeCacheKey);
+    const treeCacheKey = `cache_tree_${owner}_${repo}_${defaultBranch}`;
+    let treeData = await cacheManager.get(treeCacheKey);
+    try {
+      if (!treeData) {
+        const url = `https://api.github.com/repos/${owner}/${repo}/git/trees/${defaultBranch}?recursive=1`;
+        const treeResponse = await fetch(url, { headers: getHeaders() });
 
-    if (!treeData) {
-      const url = `https://api.github.com/repos/${owner}/${repo}/git/trees/${defaultBranch}?recursive=1`;
-      const treeResponse = await fetch(url, { headers: getHeaders() });
+        // Update rate limit display after API call
+        updateRateLimitDisplay();
 
-      if (!treeResponse.ok) {
-        // Handle rate limiting
-        if (
-          treeResponse.status === 403 &&
-          treeResponse.headers.get("X-RateLimit-Remaining") === "0"
-        ) {
-          const resetTime = new Date(
-            parseInt(treeResponse.headers.get("X-RateLimit-Reset")) * 1000
-          );
-          throw new Error(
-            `GitHub API rate limit exceeded. Resets at ${resetTime.toLocaleTimeString()}`
-          );
+        if (!treeResponse.ok) {
+          // Handle rate limiting
+          if (
+            treeResponse.status === 403 &&
+            treeResponse.headers.get("X-RateLimit-Remaining") === "0"
+          ) {
+            const resetTime = new Date(
+              parseInt(treeResponse.headers.get("X-RateLimit-Reset")) * 1000
+            );
+            throw new Error(
+              `GitHub API rate limit exceeded. Resets at ${resetTime.toLocaleTimeString()}`
+            );
+          }
+          throw new Error(`Error fetching tree: ${treeResponse.statusText}`);
         }
-        throw new Error(`Error fetching tree: ${treeResponse.statusText}`);
-      }
 
-      treeData = await treeResponse.json();
-      cacheManager.set(treeCacheKey, treeData);
+        treeData = await treeResponse.json();
+        await cacheManager.set(treeCacheKey, treeData);
 
-      if (treeData.truncated) {
-        showError("Repository is too large. Response will be partial.");
+        if (treeData.truncated) {
+          showError("Repository is too large. Response will be partial.");
+        }
       }
+    } catch (error) {
+      showError("Error fetching tree data. Please try again later.");
+      return;
     }
 
     const files = treeData.tree.filter((item) => item.type === "blob");
@@ -198,12 +275,18 @@ async function countLinesOfCode(owner, repo) {
       processedFiles += batch.length;
       updateProgress(processedFiles, fileCount);
 
-      // Dynamic delay based on authentication
+      // Update rate limit every few batches to avoid too many requests
+      if (i % (batchSize * 5) === 0) {
+        updateRateLimitDisplay();
+      }
+
       const delay = config.github.useAuth ? 50 : 100; // Less delay if authenticated
-      await new Promise((resolve) => setTimeout(resolve, delay));
+      await new Promise((resolve) => setTimeout(resolve, delay)); // Delay to avoid hitting rate limits
     }
 
     displayStats(stats);
+    // Final rate limit update when finished
+    updateRateLimitDisplay();
   } catch (error) {
     showError(`Error counting lines of code: ${error.message}`);
   } finally {
@@ -229,11 +312,11 @@ async function countLinesInFile(owner, repo, file, stats) {
   try {
     // Check cache for file content
     const fileContentCacheKey = `content_${owner}_${repo}_${file.sha}`;
-    let fileContent = cacheManager.get(fileContentCacheKey);
+    let fileContent = await cacheManager.get(fileContentCacheKey);
 
     if (!fileContent) {
       fileContent = await getFileContent(owner, repo, file.sha);
-      cacheManager.set(fileContentCacheKey, fileContent);
+      await cacheManager.set(fileContentCacheKey, fileContent);
     }
 
     const lines = fileContent.split("\n").length;
@@ -257,6 +340,32 @@ async function countLinesInFile(owner, repo, file, stats) {
   }
 }
 
+async function getFileContent(owner, repo, sha) {
+  const url = `https://api.github.com/repos/${owner}/${repo}/git/blobs/${sha}`;
+  const response = await fetch(url, { headers: getHeaders() });
+
+  if (!response.ok) {
+    // Handle rate limiting
+    if (
+      response.status === 403 &&
+      response.headers.get("X-RateLimit-Remaining") === "0"
+    ) {
+      const resetTime = new Date(
+        parseInt(response.headers.get("X-RateLimit-Reset")) * 1000
+      );
+      throw new Error(
+        `GitHub API rate limit exceeded. Resets at ${resetTime.toLocaleTimeString()}`
+      );
+    }
+    throw new Error(`Error fetching file content: ${response.statusText}`);
+  }
+
+  const data = await response.json();
+  const decodedContent = atob(data.content); // decode base64 content
+  return decodedContent;
+}
+
+//helper functions
 function getFileExtension(filePath) {
   const parts = filePath.split(".");
   if (parts.length > 1) {
@@ -290,7 +399,6 @@ function isBinaryExtension(extension) {
     "exe",
     "dll",
     "so",
-    "dylib",
     "bin",
     "dat",
     "pdf",
@@ -303,51 +411,6 @@ function isBinaryExtension(extension) {
   ];
 
   return binaryExtensions.includes(extension);
-}
-
-async function getFileContent(owner, repo, sha) {
-  const url = `https://api.github.com/repos/${owner}/${repo}/git/blobs/${sha}`;
-  const response = await fetch(url, { headers: getHeaders() });
-
-  if (!response.ok) {
-    // Handle rate limiting
-    if (
-      response.status === 403 &&
-      response.headers.get("X-RateLimit-Remaining") === "0"
-    ) {
-      const resetTime = new Date(
-        parseInt(response.headers.get("X-RateLimit-Reset")) * 1000
-      );
-      throw new Error(
-        `GitHub API rate limit exceeded. Resets at ${resetTime.toLocaleTimeString()}`
-      );
-    }
-    throw new Error(`Error fetching file content: ${response.statusText}`);
-  }
-
-  const data = await response.json();
-  const decodedContent = atob(data.content); // decode base64 content
-  return decodedContent;
-}
-
-// Function to set authentication token
-function setGitHubToken(token) {
-  if (token && token.trim() !== "") {
-    config.github.token = token;
-    config.github.useAuth = true;
-    console.log("GitHub authentication enabled");
-    return true;
-  } else {
-    config.github.useAuth = false;
-    console.log("GitHub authentication disabled");
-    return false;
-  }
-}
-
-// Clear cache function (useful for debugging or forcing fresh data)
-function clearCache() {
-  config.cache.storage = {};
-  console.log("Cache cleared");
 }
 
 // Main execution function with authentication option
@@ -365,9 +428,49 @@ function analyzeRepository(owner, repo, token = null) {
     });
 }
 
-function updateProgress(processedFiles, totalFiles) {
-  console.log(`Processing: ${processedFiles}/${totalFiles} files`);
+// API rate limit handling
+async function checkRateLimit() {
+  const url = "https://api.github.com/rate_limit";
+  const response = await fetch(url, { headers: getHeaders() });
+  if (!response.ok) {
+    throw new Error(`Error fetching rate limit: ${response.statusText}`);
+  }
+  const data = await response.json();
 
+  // Get the appropriate rate limit data based on authentication status
+  const rateData = config.github.useAuth ? data.rate : data.rate;
+  const rateRemaining = rateData.remaining;
+  const rateReset = new Date(rateData.reset * 1000).toLocaleTimeString();
+  const rateLimit = rateData.limit;
+
+  const apiData = {
+    remaining: rateRemaining,
+    reset: rateReset,
+    limit: rateLimit,
+  };
+  return apiData;
+}
+
+// New function to update the rate limit display
+async function updateRateLimitDisplay() {
+  const apiRemainingSpan = document.getElementById("api-remaining");
+  const apiResetSpan = document.getElementById("api-resetTime");
+
+  try {
+    const data = await checkRateLimit();
+    if (apiRemainingSpan) {
+      apiRemainingSpan.textContent = `${data.remaining}/${data.limit}`;
+    }
+    if (apiResetSpan) apiResetSpan.textContent = data.reset;
+  } catch (error) {
+    console.error("Error fetching rate limit:", error);
+    if (apiRemainingSpan) apiRemainingSpan.textContent = "Error";
+    if (apiResetSpan) apiResetSpan.textContent = "Error";
+  }
+}
+
+// UI updates
+function updateProgress(processedFiles, totalFiles) {
   const progressBar = document.getElementById("progress-bar");
   const progressText = document.getElementById("progress-text");
 
@@ -380,11 +483,6 @@ function updateProgress(processedFiles, totalFiles) {
 
 // Fix the display stats function
 function displayStats(stats) {
-  console.log("Total Lines of Code:", stats.totalLines);
-  console.log("Total Files Processed:", stats.totalFiles);
-  console.log("Number of Files Skipped:", stats.numFilesSkipped);
-  console.log("Lines by Extension:");
-
   // Get UI elements
   const resultsDiv = document.getElementById("results");
   const loadingDiv = document.getElementById("loading");
@@ -441,9 +539,10 @@ function displayStats(stats) {
 
       const row = document.createElement("div");
       row.className = "extension-row";
+      const fileText = data.files === 1 ? "file" : "files";
       row.innerHTML = `
           <span>${ext}</span>
-          <span>${data.files.toLocaleString()} files, ${data.lines.toLocaleString()} lines (${percentage}%)</span>
+          <span>${data.files.toLocaleString()} ${fileText}, ${data.lines.toLocaleString()} lines (${percentage}%)</span> 
         `;
 
       extensionsDiv.appendChild(row);
@@ -453,6 +552,22 @@ function displayStats(stats) {
   // Show results and hide loading
   if (loadingDiv) loadingDiv.style.display = "none";
   if (resultsDiv) resultsDiv.style.display = "block";
+}
+// Update showError function to use the UI
+function showError(message) {
+  console.error(message);
+
+  const errorDiv = document.getElementById("error");
+  const loadingDiv = document.getElementById("loading");
+
+  if (errorDiv) {
+    errorDiv.textContent = message;
+    errorDiv.style.display = "block";
+  }
+
+  if (loadingDiv) {
+    loadingDiv.style.display = "none";
+  }
 }
 
 // Fix the main DOM loaded handler
@@ -472,8 +587,11 @@ document.addEventListener("DOMContentLoaded", () => {
   if (resultsDiv) resultsDiv.style.display = "none";
   if (errorDiv) errorDiv.style.display = "none";
 
-  // Load token from storage
-  loadToken();
+  // Load token from storage and update API rate limit display
+  loadToken().then(() => {
+    // Initial rate limit check after token is loaded
+    updateRateLimitDisplay();
+  });
 
   // Add token save button handler
   if (saveTokenButton) {
@@ -497,37 +615,43 @@ document.addEventListener("DOMContentLoaded", () => {
         currentWindow: true,
       });
 
-      console.log("Current URL:", tab.url); // Debug log
-
-      // Extract owner/repo from GitHub URL
-      const match = tab.url.match(/^https:\/\/github\.com\/([^\/]+)\/([^\/]+)/);
+      // Extract owner/repo from GitHub URL using regex
+      const match = tab.url.match(/github\.com\/([^\/]+)\/([^\/]+)/);
 
       if (match) {
         const [_, owner, repo] = match;
-        console.log(`Detected repo: ${owner}/${repo}`); // Debug log
+        // Clean up repo name (remove any trailing slashes or query params)
+        const cleanRepo = repo.split(/[\/\?#]/)[0];
+
+        console.log(`Detected repo: ${owner}/${cleanRepo}`); // Debug log
 
         // Update UI
         if (currentRepoDiv)
-          currentRepoDiv.textContent = `Repository: ${owner}/${repo}`;
+          currentRepoDiv.textContent = `Repository: ${owner}/${cleanRepo}`;
         if (button) {
           button.disabled = false;
 
+          button.replaceWith(button.cloneNode(true)); // Clone the button to remove old event listeners
+          // Reassign the button to the new cloned button
+          const newButton = document.getElementById("countLoc");
+
           // Add click handler
-          button.addEventListener("click", () => {
+          newButton.addEventListener("click", () => {
             // Show loading state
             if (loadingDiv) loadingDiv.style.display = "block";
             if (resultsDiv) resultsDiv.style.display = "none";
             if (errorDiv) errorDiv.style.display = "none";
 
             // Analyze the repository
-            analyzeRepository(owner, repo);
+            analyzeRepository(owner, cleanRepo);
           });
         }
       } else {
-        console.log("No GitHub repository detected in URL"); // Debug log
+        if (currentRepoDiv)
+          currentRepoDiv.textContent = "No GitHub repository detected";
+        if (button) button.disabled = true;
       }
     } catch (error) {
-      console.error("Error detecting repository:", error);
       if (errorDiv) {
         errorDiv.style.display = "block";
         errorDiv.textContent = `Error: ${error.message}`;
@@ -538,31 +662,3 @@ document.addEventListener("DOMContentLoaded", () => {
   // Start the detection process
   detectGitHubRepo();
 });
-
-// Update showError function to use the UI
-function showError(message) {
-  console.error(message);
-
-  const errorDiv = document.getElementById("error");
-  const loadingDiv = document.getElementById("loading");
-
-  if (errorDiv) {
-    errorDiv.textContent = message;
-    errorDiv.style.display = "block";
-  }
-
-  if (loadingDiv) {
-    loadingDiv.style.display = "none";
-  }
-}
-
-// Example usage:
-// Without authentication (public repos only, lower rate limits)
-//analyzeRepository("maishaSupritee", "Cinebon");
-
-// With authentication (higher rate limits)
-/* analyzeRepository(
-  "maishaSupritee",
-  "inferix-ui",
-  ""
-); */

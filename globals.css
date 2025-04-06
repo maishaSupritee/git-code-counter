@@ -139,3 +139,18 @@ button:disabled {
 .unauthenticated {
   background-color: #cb2431;
 }
+
+.api-text {
+  font-size: 12px;
+  color: #666;
+}
+
+#api-remaining {
+  color: #cb2431;
+  font-weight: bold;
+}
+
+#api-limit {
+  color: #2cbb5d;
+  font-weight: bold;
+}
