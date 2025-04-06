@@ -147,6 +147,7 @@ async function countLinesInFile(owner, repo, file, stats) {
 
   // Skip if the file extension is in the exclusions list
   if (exclusionsResult.includes(fileExtension)) {
+    stats.totalFiles++;
     stats.numFilesSkipped++;
     stats.filesSkipped.push(`${filePath} (excluded by user)`);
     return;
@@ -158,6 +159,7 @@ async function countLinesInFile(owner, repo, file, stats) {
     file.size > 1000000 ||
     fileExtension === "no-extension"
   ) {
+    stats.totalFiles++;
     stats.numFilesSkipped++;
     stats.filesSkipped.push(filePath);
     return;
@@ -189,6 +191,7 @@ async function countLinesInFile(owner, repo, file, stats) {
     stats.byExtension[fileExtension].lines += lines;
   } catch (error) {
     console.warn(`Could not process file ${filePath}: ${error.message}`);
+    stats.totalFiles++;
     stats.numFilesSkipped++;
     stats.filesSkipped.push(filePath);
   }
