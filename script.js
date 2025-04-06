@@ -138,6 +138,20 @@ async function countLinesInFile(owner, repo, file, stats) {
   const filePath = file.path;
   const fileExtension = getFileExtension(filePath);
 
+  // Get exclusions from storage
+  const exclusionsResult = await new Promise((resolve) => {
+    chrome.storage.local.get("fileExclusions", (result) => {
+      resolve(result.fileExclusions || []);
+    });
+  });
+
+  // Skip if the file extension is in the exclusions list
+  if (exclusionsResult.includes(fileExtension)) {
+    stats.numFilesSkipped++;
+    stats.filesSkipped.push(`${filePath} (excluded by user)`);
+    return;
+  }
+
   // Skip binary files and large files
   if (
     isBinaryExtension(fileExtension) ||
@@ -355,6 +369,89 @@ document.addEventListener("DOMContentLoaded", () => {
   const loadingDiv = document.getElementById("loading");
   const resultsDiv = document.getElementById("results");
   const errorDiv = document.getElementById("error");
+
+  const exclusionInput = document.getElementById("exclusionInput");
+  const addExclusionButton = document.getElementById("addExclusion");
+  const exclusionsList =
+    document.getElementById("exclusionsList") || createExclusionsList();
+
+  // Initialize exclusions array from storage
+  let fileExclusions = [];
+
+  // Load saved exclusions when popup opens
+  chrome.storage.local.get("fileExclusions", (result) => {
+    if (result.fileExclusions) {
+      fileExclusions = result.fileExclusions;
+      renderExclusions();
+    }
+  });
+
+  // Add exclusion when button is clicked
+  if (addExclusionButton) {
+    addExclusionButton.addEventListener("click", () => {
+      if (exclusionInput && exclusionInput.value.trim()) {
+        const extension = exclusionInput.value.trim().toLowerCase();
+        // Remove dot if user included it
+        const cleanExtension = extension.startsWith(".")
+          ? extension.substring(1)
+          : extension;
+
+        if (!fileExclusions.includes(cleanExtension)) {
+          fileExclusions.push(cleanExtension); // Add new exclusion if not already present
+          saveExclusions();
+          renderExclusions();
+        }
+        exclusionInput.value = "";
+      }
+    });
+  }
+
+  // Create exclusions list element if it doesn't exist
+  function createExclusionsList() {
+    const container = document.getElementById("exclusions-section");
+    if (container) {
+      const list = document.createElement("ul");
+      list.id = "exclusionsList";
+      container.appendChild(list);
+      return list;
+    }
+    return null;
+  }
+
+  // Save exclusions to storage
+  function saveExclusions() {
+    chrome.storage.local.set({ fileExclusions });
+  }
+
+  // Render the list of exclusions
+  function renderExclusions() {
+    if (!exclusionsList) return;
+
+    exclusionsList.innerHTML = "";
+    if (fileExclusions.length === 0) {
+      const emptyItem = document.createElement("li");
+      emptyItem.textContent = "No exclusions added";
+      exclusionsList.appendChild(emptyItem);
+    } else {
+      fileExclusions.forEach((extension) => {
+        const item = document.createElement("li");
+        item.textContent = `.${extension}`;
+
+        // Add remove button
+        const removeBtn = document.createElement("button");
+        removeBtn.textContent = "×";
+        removeBtn.className = "remove-exclusion";
+        removeBtn.addEventListener("click", () => {
+          fileExclusions = fileExclusions.filter((ext) => ext !== extension);
+          saveExclusions();
+          renderExclusions();
+        });
+
+        item.appendChild(removeBtn);
+        exclusionsList.appendChild(item);
+      });
+    }
+  }
 
   // Initially hide results and loading
   if (loadingDiv) loadingDiv.style.display = "none";

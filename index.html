@@ -42,6 +42,20 @@
       </p>
     </div>
 
+    <div id="exclusions-section">
+      <h3>File Exclusions</h3>
+      <p>Exclude files from the analysis (optional)</p>
+      <div class="exclusion-input">
+        <input
+          type="text"
+          id="exclusionInput"
+          placeholder="e.g. 'md', 'txt', 'js'"
+        />
+        <button id="addExclusion">Add Exclusion</button>
+      </div>
+      <ul id="exclusionsList"></ul>
+    </div>
+
     <button id="countLoc" disabled>Count Lines of Code</button>
 
     <div id="loading" class="loading">

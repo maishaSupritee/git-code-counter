@@ -154,3 +154,48 @@ button:disabled {
   color: #2cbb5d;
   font-weight: bold;
 }
+
+.exclusion-section {
+  margin-bottom: 10px;
+}
+
+#addExclusion {
+  background-color: #0366d6;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  height: 30px;
+}
+
+.exclusion-input input {
+  height: 25px;
+  border-radius: 4px;
+  border: 1px solid #ddd;
+  flex-grow: 1;
+}
+
+#exclusionsList {
+  list-style-type: none;
+  padding: 0;
+  margin-top: 10px;
+}
+
+#exclusionsList li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 8px;
+  margin-bottom: 4px;
+  background-color: #f1f1f1;
+  border-radius: 4px;
+}
+
+.remove-exclusion {
+  background: none;
+  border: none;
+  color: #cc0000;
+  font-weight: bold;
+  cursor: pointer;
+  padding: 0 6px;
+}
