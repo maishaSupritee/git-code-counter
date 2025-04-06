@@ -1,173 +1,13 @@
-const config = {
-  github: {
-    token: "",
-    useAuth: false,
-  },
-  cache: {
-    enabled: true,
-  },
-};
-
-//CACHING
-const cacheManager = {
-  // Cache expiration time (1 hour in milliseconds)
-  expirationMs: 3600000,
-
-  // Get data from cache
-  get: function (key) {
-    return new Promise((resolve) => {
-      chrome.storage.local.get([key], (result) => {
-        if (!result[key]) {
-          resolve(null); // Return null if no cache found
-          return;
-        }
-
-        const cachedItem = result[key];
-
-        // Check if cache has expired
-        if (Date.now() - cachedItem.timestamp > this.expirationMs) {
-          this.remove(key);
-          resolve(null);
-          return;
-        }
-
-        console.log(`Cache hit: ${key}`);
-        resolve(cachedItem.data);
-      });
-    });
-  },
-
-  // Save data to cache
-  set: function (key, data) {
-    const cacheItem = {
-      timestamp: Date.now(),
-      data: data,
-    };
-
-    return new Promise((resolve) => {
-      chrome.storage.local.set({ [key]: cacheItem }, () => {
-        console.log(`Cached: ${key}`);
-        resolve();
-      });
-    });
-  },
-
-  // Remove item from cache
-  remove: function (key) {
-    return new Promise((resolve) => {
-      chrome.storage.local.remove([key], () => {
-        console.log(`Cache removed: ${key}`);
-        resolve();
-      });
-    });
-  },
-
-  // Clear entire cache
-  clear: function () {
-    return new Promise((resolve) => {
-      chrome.storage.local.get(null, (items) => {
-        // Filter only cache items
-        const cacheKeys = Object.keys(items).filter(
-          (key) => key.startsWith("cache_") //prefix for cache keys
-        );
-
-        if (cacheKeys.length > 0) {
-          chrome.storage.local.remove(cacheKeys, () => {
-            console.log("Cache cleared");
-            resolve();
-          });
-        } else {
-          resolve(); // No cache items to clear
-        }
-      });
-    });
-  },
-};
-
-//AUTHENTICATION
-// Configure authentication for fetch requests
-function getHeaders() {
-  const headers = {
-    Accept: "application/vnd.github+json", // Set the Accept header for GitHub API
-  };
-
-  if (config.github.useAuth && config.github.token) {
-    headers["Authorization"] = `token ${config.github.token}`; // Add token if available
-  }
-
-  return headers;
-}
-
-// Save token to Chrome storage
-function saveToken(token) {
-  chrome.storage.local.set({ github_token: token }, function () {
-    console.log("Token saved");
-    setGitHubToken(token);
-    updateAuthStatus(true);
-    // Update rate limit display after authentication changes
-    updateRateLimitDisplay();
-  });
-}
-
-// Load token from Chrome storage
-function loadToken() {
-  return new Promise((resolve) => {
-    chrome.storage.local.get(["github_token"], function (result) {
-      if (result.github_token) {
-        setGitHubToken(result.github_token);
-        updateAuthStatus(true);
-        // Update rate limit display after authentication is loaded
-        updateRateLimitDisplay();
-        resolve(true);
-      } else {
-        updateAuthStatus(false);
-        // Update rate limit display even if not authenticated
-        updateRateLimitDisplay();
-        resolve(false);
-      }
-    });
-  });
-}
-// Function to set authentication token
-function setGitHubToken(token) {
-  if (token && token.trim() !== "") {
-    config.github.token = token;
-    config.github.useAuth = true;
-    console.log("GitHub authentication enabled");
-    return true;
-  } else {
-    config.github.useAuth = false;
-    console.log("GitHub authentication disabled");
-    return false;
-  }
-}
-
-// Clear token from storage
-function clearToken() {
-  chrome.storage.local.remove(["github_token"], function () {
-    console.log("Token cleared");
-    setGitHubToken("");
-    updateAuthStatus(false);
-    // Update rate limit display after authentication is removed
-    updateRateLimitDisplay();
-  });
-}
-
-// Update UI to show authentication status
-function updateAuthStatus(isAuthenticated) {
-  const statusCircle = document.querySelector(".status-circle");
-  const authText = document.getElementById("auth-text");
-
-  if (isAuthenticated) {
-    statusCircle.classList.remove("unauthenticated");
-    statusCircle.classList.add("authenticated");
-    authText.textContent = "Authenticated";
-  } else {
-    statusCircle.classList.remove("authenticated");
-    statusCircle.classList.add("unauthenticated");
-    authText.textContent = "Not authenticated";
-  }
-}
+import { cacheManager } from "./cache.js"; // Import cache manager
+import {
+  config,
+  getHeaders,
+  saveToken,
+  loadToken,
+  clearToken,
+  setGitHubToken,
+} from "./authentication.js"; // Import authentication functions
+import { isBinaryExtension, getFileExtension, showError } from "./helpers.js"; // Import helper functions
 
 // FETCHING REPO DATA AND COUNTING LINES OF CODE
 async function fetchGithubRepoData(owner, repo) {
@@ -365,54 +205,6 @@ async function getFileContent(owner, repo, sha) {
   return decodedContent;
 }
 
-//helper functions
-function getFileExtension(filePath) {
-  const parts = filePath.split(".");
-  if (parts.length > 1) {
-    return parts.pop().toLowerCase();
-  }
-  return "no-extension";
-}
-
-function isBinaryExtension(extension) {
-  const binaryExtensions = [
-    "svg",
-    "png",
-    "jpg",
-    "jpeg",
-    "gif",
-    "bmp",
-    "ico",
-    "webp",
-    "mp3",
-    "wav",
-    "ogg",
-    "mp4",
-    "webm",
-    "mov",
-    "zip",
-    "tar",
-    "gz",
-    "rar",
-    "7z",
-    "jar",
-    "exe",
-    "dll",
-    "so",
-    "bin",
-    "dat",
-    "pdf",
-    "doc",
-    "docx",
-    "xls",
-    "xlsx",
-    "ppt",
-    "pptx",
-  ];
-
-  return binaryExtensions.includes(extension);
-}
-
 // Main execution function with authentication option
 function analyzeRepository(owner, repo, token = null) {
   if (token) {
@@ -481,7 +273,6 @@ function updateProgress(processedFiles, totalFiles) {
   }
 }
 
-// Fix the display stats function
 function displayStats(stats) {
   // Get UI elements
   const resultsDiv = document.getElementById("results");
@@ -553,24 +344,7 @@ function displayStats(stats) {
   if (loadingDiv) loadingDiv.style.display = "none";
   if (resultsDiv) resultsDiv.style.display = "block";
 }
-// Update showError function to use the UI
-function showError(message) {
-  console.error(message);
 
-  const errorDiv = document.getElementById("error");
-  const loadingDiv = document.getElementById("loading");
-
-  if (errorDiv) {
-    errorDiv.textContent = message;
-    errorDiv.style.display = "block";
-  }
-
-  if (loadingDiv) {
-    loadingDiv.style.display = "none";
-  }
-}
-
-// Fix the main DOM loaded handler
 document.addEventListener("DOMContentLoaded", () => {
   // Get UI elements for token management
   const tokenInput = document.getElementById("githubToken");
@@ -586,6 +360,8 @@ document.addEventListener("DOMContentLoaded", () => {
   if (loadingDiv) loadingDiv.style.display = "none";
   if (resultsDiv) resultsDiv.style.display = "none";
   if (errorDiv) errorDiv.style.display = "none";
+
+  updateRateLimitDisplay();
 
   // Load token from storage and update API rate limit display
   loadToken().then(() => {
