@@ -1,3 +1,5 @@
+import { updateRateLimitDisplay } from "./helpers.js";
+
 export const config = {
   github: {
     token: "",

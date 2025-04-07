@@ -7,7 +7,12 @@ import {
   clearToken,
   setGitHubToken,
 } from "./authentication.js"; // Import authentication functions
-import { isBinaryExtension, getFileExtension, showError } from "./helpers.js"; // Import helper functions
+import {
+  isBinaryExtension,
+  getFileExtension,
+  showError,
+  updateRateLimitDisplay,
+} from "./helpers.js"; // Import helper functions
 
 // FETCHING REPO DATA AND COUNTING LINES OF CODE
 async function fetchGithubRepoData(owner, repo) {
@@ -235,47 +240,6 @@ function analyzeRepository(owner, repo, token = null) {
     .catch((error) => {
       showError(`Error fetching repository data: ${error.message}`);
     });
-}
-
-// API rate limit handling
-async function checkRateLimit() {
-  const url = "https://api.github.com/rate_limit";
-  const response = await fetch(url, { headers: getHeaders() });
-  if (!response.ok) {
-    throw new Error(`Error fetching rate limit: ${response.statusText}`);
-  }
-  const data = await response.json();
-
-  // Get the appropriate rate limit data based on authentication status
-  const rateData = config.github.useAuth ? data.rate : data.rate;
-  const rateRemaining = rateData.remaining;
-  const rateReset = new Date(rateData.reset * 1000).toLocaleTimeString();
-  const rateLimit = rateData.limit;
-
-  const apiData = {
-    remaining: rateRemaining,
-    reset: rateReset,
-    limit: rateLimit,
-  };
-  return apiData;
-}
-
-// New function to update the rate limit display
-async function updateRateLimitDisplay() {
-  const apiRemainingSpan = document.getElementById("api-remaining");
-  const apiResetSpan = document.getElementById("api-resetTime");
-
-  try {
-    const data = await checkRateLimit();
-    if (apiRemainingSpan) {
-      apiRemainingSpan.textContent = `${data.remaining}/${data.limit}`;
-    }
-    if (apiResetSpan) apiResetSpan.textContent = data.reset;
-  } catch (error) {
-    console.error("Error fetching rate limit:", error);
-    if (apiRemainingSpan) apiRemainingSpan.textContent = "Error";
-    if (apiResetSpan) apiResetSpan.textContent = "Error";
-  }
 }
 
 // UI updates
