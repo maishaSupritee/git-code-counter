@@ -342,6 +342,18 @@ document.addEventListener("DOMContentLoaded", () => {
   const exclusionsList =
     document.getElementById("exclusionsList") || createExclusionsList();
 
+  // Add token help link handler
+  const tokenHelpLink = document.getElementById("tokenHelpLink");
+  if (tokenHelpLink) {
+    tokenHelpLink.addEventListener("click", (e) => {
+      e.preventDefault();
+      // Open GitHub token creation page in a new tab
+      chrome.tabs.create({
+        url: "https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/creating-a-personal-access-token",
+      });
+    });
+  }
+
   // Initialize exclusions array from storage
   let fileExclusions = [];
 
