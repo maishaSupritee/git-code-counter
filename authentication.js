@@ -50,7 +50,7 @@ export function loadToken() {
         const currentTime = Date.now();
 
         // Check if token is expired
-        if (now > tokenData.expires) {
+        if (currentTime > tokenData.expires) {
           console.log("Token expired, clearing...");
           clearToken();
           resolve(false);
