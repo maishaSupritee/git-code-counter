@@ -6,6 +6,8 @@ import {
   loadToken,
   clearToken,
   setGitHubToken,
+  initializeAuthChecks,
+  updateAuthStatus,
 } from "./authentication.js"; // Import authentication functions
 import {
   isBinaryExtension,
@@ -444,6 +446,8 @@ document.addEventListener("DOMContentLoaded", () => {
     // Initial rate limit check after token is loaded
     updateRateLimitDisplay();
   });
+
+  initializeAuthChecks(); // Initialize authentication checks
 
   // Add token save button handler
   if (saveTokenButton) {

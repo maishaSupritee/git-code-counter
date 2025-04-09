@@ -9,6 +9,8 @@ body {
 h1 {
   margin-top: 0;
   color: #6d5691;
+  align-items: center;
+  justify-content: center;
 }
 h2 {
   margin-top: 20px;
