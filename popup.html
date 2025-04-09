@@ -2,7 +2,7 @@
 <html>
   <head>
     <title>GitHub Code Counter</title>
-    <link rel="stylesheet" href="globals.css" />
+    <link rel="stylesheet" href="popup.css" />
   </head>
   <body>
     <div class="header">
@@ -71,7 +71,9 @@
       <ul id="exclusionsList"></ul>
     </div>
 
-    <button id="countLoc" disabled>Count Lines of Code</button>
+    <div class="button-div">
+      <button id="countLoc" disabled>Count Lines of Code</button>
+    </div>
 
     <div id="loading" class="loading">
       <p>Analyzing repository... <span id="progress-text">0%</span></p>
@@ -106,6 +108,10 @@
       <h3>By Extension</h3>
       <div id="extensions" class="extensions"></div>
     </div>
+
+    <a href="privacy-policy.html" target="_blank" class="privacy-link"
+      >Privacy Policy</a
+    >
 
     <script type="module" src="script.js"></script>
   </body>

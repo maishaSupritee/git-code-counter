@@ -227,3 +227,11 @@ button:disabled {
 .helper-text a:hover {
   text-decoration: underline;
 }
+
+.privacy-link {
+  color: #5c02e8;
+}
+
+.button-div {
+  margin-bottom: 10px;
+}

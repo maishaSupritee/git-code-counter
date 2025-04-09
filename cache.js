@@ -57,9 +57,14 @@ export const cacheManager = {
         }
 
         const cachedItem = result[key];
+        const cacheAge = Date.now() - cachedItem.timestamp;
 
-        // Check if cache has expired
-        if (Date.now() - cachedItem.timestamp > this.expirationMs) {
+        console.log(
+          `Cache age for ${key}: ${Math.round(cacheAge / 60000)} minutes`
+        );
+
+        // Check if cache is expired
+        if (cacheAge > this.expirationMs) {
           this.remove(key);
           resolve(null);
           return;
@@ -92,6 +97,7 @@ export const cacheManager = {
 
     const cacheItem = {
       timestamp: Date.now(),
+      expires: Date.now() + this.expirationMs,
       data: data,
     };
 
@@ -100,11 +106,9 @@ export const cacheManager = {
         // Update our size tracking
         this.estimatedSize += itemSize;
         console.log(
-          `Cached: ${key} (size: ${(itemSize / 1024).toFixed(2)}KB, total: ${(
-            this.estimatedSize /
-            1024 /
-            1024
-          ).toFixed(2)}MB)`
+          `Cached: ${key} (size: ${(itemSize / 1024).toFixed(
+            2
+          )}KB, expires: ${new Date(cacheItem.expires).toLocaleTimeString()})`
         );
         resolve(true);
       });
@@ -200,7 +204,39 @@ export const cacheManager = {
       });
     });
   },
+
+  // Periodically clean expired cache
+  cleanExpiredCache: function () {
+    chrome.storage.local.get(null, (items) => {
+      const now = Date.now();
+      const keysToRemove = [];
+
+      for (const key in items) {
+        if (key.startsWith(CACHE_PREFIX) && items[key].timestamp) {
+          if (now - items[key].timestamp > this.expirationMs) {
+            keysToRemove.push(key);
+          }
+        }
+      }
+
+      if (keysToRemove.length > 0) {
+        chrome.storage.local.remove(keysToRemove, () => {
+          console.log(
+            `Auto-cleaned ${keysToRemove.length} expired cache items`
+          );
+        });
+      }
+    });
+  },
 };
 
 // Initialize cache manager on load
-cacheManager.init();
+cacheManager.init().then(() => {
+  // Clean expired cache on startup
+  cacheManager.cleanExpiredCache();
+
+  // Set up periodic cache cleaning (every 15 minutes)
+  setInterval(() => {
+    cacheManager.cleanExpiredCache();
+  }, 15 * 60 * 1000);
+});
