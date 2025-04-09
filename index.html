@@ -31,9 +31,17 @@
       <p class="helper-text">
         <a href="#" id="tokenHelpLink">How to create a GitHub token?</a>
       </p>
-      <p class="info-text">
-        You only need to select the public_repo scope for this tool to work.
-      </p>
+
+      <div class="token-help">
+        <p class="info-text">
+          For private repositories, create a token with the
+          <code>repo</code> scope.
+        </p>
+        <p class="info-text">
+          For public repositories only, the <code>public_repo</code> scope is
+          sufficient.
+        </p>
+      </div>
 
       <div id="auth-status" class="auth-status">
         <span class="status-circle unauthenticated"></span>
