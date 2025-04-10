@@ -26,4 +26,4 @@ Cached repository data and the Github personal token, is automatically cleared a
 
 ## Contact
 
-If you have any questions about this privacy policy, please contact schow0702@gmail.com.
+If you have any questions about this privacy policy, please contact chowdeveloper07@gmail.com.
