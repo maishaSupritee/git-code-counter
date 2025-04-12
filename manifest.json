@@ -20,6 +20,6 @@
       "128": "./icons/128.png"
     }
   },
-  "permissions": ["activeTab", "tabs", "storage"],
+  "permissions": ["tabs", "storage"],
   "host_permissions": ["https://api.github.com/*"]
 }
