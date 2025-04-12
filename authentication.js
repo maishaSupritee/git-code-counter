@@ -4,6 +4,7 @@ export const config = {
   github: {
     token: "",
     useAuth: false,
+    tokenExpirationMs: 3600000, // 1 hour in milliseconds
   },
   cache: {
     enabled: true,
@@ -25,7 +26,13 @@ export function getHeaders() {
 
 // Save token to Chrome storage
 export function saveToken(token) {
-  chrome.storage.local.set({ github_token: token }, function () {
+  const tokenData = {
+    value: token,
+    timestamp: Date.now(),
+    expires: Date.now() + config.github.tokenExpirationMs,
+  };
+
+  chrome.storage.local.set({ github_token: tokenData }, function () {
     console.log("Token saved");
     setGitHubToken(token);
     updateAuthStatus(true);
@@ -38,9 +45,22 @@ export function saveToken(token) {
 export function loadToken() {
   return new Promise((resolve) => {
     chrome.storage.local.get(["github_token"], function (result) {
-      if (result.github_token) {
+      if (result.github_token && result.github_token.value) {
+        const tokenData = result.github_token;
+        const currentTime = Date.now();
+
+        // Check if token is expired
+        if (currentTime > tokenData.expires) {
+          console.log("Token expired, clearing...");
+          clearToken();
+          resolve(false);
+          return;
+        }
+
+        // Token is valid
         setGitHubToken(result.github_token);
         updateAuthStatus(true);
+
         // Update rate limit display after authentication is loaded
         updateRateLimitDisplay();
         resolve(true);
@@ -92,4 +112,27 @@ export function updateAuthStatus(isAuthenticated) {
     statusCircle.classList.add("unauthenticated");
     authText.textContent = "Not authenticated";
   }
+}
+
+export function checkTokenExpiration() {
+  chrome.storage.local.get(["github_token"], function (result) {
+    if (result.github_token && result.github_token.expires) {
+      const now = Date.now();
+      if (now > result.github_token.expires) {
+        console.log("Token expired during session check");
+        clearToken();
+      }
+    }
+  });
+}
+
+// Periodic token expiration check (every 15 minutes)
+export function initializeAuthChecks() {
+  // Initial check
+  checkTokenExpiration();
+
+  // Set interval for regular checks
+  setInterval(() => {
+    checkTokenExpiration();
+  }, 15 * 60 * 1000); // Check every 15 minutes
 }
