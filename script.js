@@ -1,520 +1,471 @@
-import { cacheManager } from "./cache.js"; // Import cache manager
+import { cacheManager } from "./cache.js";
 import {
-  config,
-  getHeaders,
-  saveToken,
-  loadToken,
   clearToken,
-  setGitHubToken,
-  initializeAuthChecks,
-  updateAuthStatus,
-} from "./authentication.js"; // Import authentication functions
+  config,
+  loadToken,
+  saveToken,
+} from "./authentication.js";
 import {
-  isBinaryExtension,
-  getFileExtension,
+  githubFetch,
+  RateLimitError,
   showError,
   updateRateLimitDisplay,
-} from "./helpers.js"; // Import helper functions
+} from "./helpers.js";
+import {
+  countPhysicalLines,
+  getFileExtension,
+  isBinaryExtension,
+} from "./line-utils.js";
 
-// FETCHING REPO DATA AND COUNTING LINES OF CODE
+const MAX_FILE_SIZE_BYTES = 1_000_000;
+
+function storageGet(keys) {
+  return new Promise((resolve, reject) => {
+    chrome.storage.local.get(keys, (result) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      resolve(result);
+    });
+  });
+}
+
+function storageSet(items) {
+  return new Promise((resolve, reject) => {
+    chrome.storage.local.set(items, () => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
 async function fetchGithubRepoData(owner, repo) {
-  // all cache keys will be prefixed with "cache_"
   const cacheKey = `cache_repo_${owner}_${repo}`;
-
-  // Check cache first
   const cachedData = await cacheManager.get(cacheKey);
   if (cachedData) return cachedData;
 
-  // Make API request if not in cache
-  const url = `https://api.github.com/repos/${owner}/${repo}`;
-  const response = await fetch(url, { headers: getHeaders() });
-
-  // Update rate limit display after API call
-  updateRateLimitDisplay();
+  const response = await githubFetch(
+    `https://api.github.com/repos/${owner}/${repo}`,
+  );
 
   if (!response.ok) {
-    // Handle rate limiting specifically
-    if (
-      response.status === 403 &&
-      response.headers.get("X-RateLimit-Remaining") === "0"
-    ) {
-      const resetTime = new Date(
-        parseInt(response.headers.get("X-RateLimit-Reset")) * 1000
-      );
+    if (response.status === 404) {
       throw new Error(
-        `GitHub API rate limit exceeded. Resets at ${resetTime.toLocaleTimeString()}`
+        "Repository not found. For a private repository, save a token with access to that repository.",
       );
     }
-    throw new Error(`Error fetching data: ${response.statusText}`);
+    throw new Error(
+      `Could not read repository information (${response.status} ${response.statusText}).`,
+    );
   }
 
   const data = await response.json();
-
-  // Cache the result
   await cacheManager.set(cacheKey, data);
-
   return data;
+}
+
+async function fetchRepositoryTree(owner, repo, defaultBranch) {
+  const cacheKey = `cache_tree_${owner}_${repo}_${defaultBranch}`;
+  const cachedData = await cacheManager.get(cacheKey);
+  if (cachedData) return cachedData;
+
+  const response = await githubFetch(
+    `https://api.github.com/repos/${owner}/${repo}/git/trees/${encodeURIComponent(defaultBranch)}?recursive=1`,
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      `Could not read the repository tree (${response.status} ${response.statusText}).`,
+    );
+  }
+
+  const data = await response.json();
+  if (data.truncated) {
+    throw new Error(
+      "GitHub truncated this repository tree because the repository is too large. No partial result was shown.",
+    );
+  }
+
+  await cacheManager.set(cacheKey, data);
+  return data;
+}
+
+async function getFileExclusions() {
+  const result = await storageGet(["fileExclusions"]);
+  return new Set(result.fileExclusions ?? []);
+}
+
+function getSkipReason(file, extension, exclusions) {
+  if (exclusions.has(extension)) return "excluded by user";
+  if (isBinaryExtension(extension)) return "binary file";
+  if (file.size > MAX_FILE_SIZE_BYTES) return "larger than 1 MB";
+  if (extension === "no-extension") return "unknown extensionless file";
+  return null;
+}
+
+async function getFileContent(owner, repo, sha) {
+  const response = await githubFetch(
+    `https://api.github.com/repos/${owner}/${repo}/git/blobs/${sha}`,
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      `Could not fetch file content (${response.status} ${response.statusText}).`,
+    );
+  }
+
+  const data = await response.json();
+  if (data.encoding !== "base64" || typeof data.content !== "string") {
+    throw new Error("GitHub returned an unsupported blob encoding.");
+  }
+
+  return atob(data.content.replace(/\n/g, ""));
+}
+
+async function countLinesInFile(owner, repo, file, extension) {
+  const lineCacheKey = `cache_lines_${file.sha}`;
+  const cachedLines = await cacheManager.get(lineCacheKey);
+
+  if (Number.isInteger(cachedLines) && cachedLines >= 0) {
+    return cachedLines;
+  }
+
+  const fileContent = await getFileContent(owner, repo, file.sha);
+  const lines = countPhysicalLines(fileContent);
+  await cacheManager.set(lineCacheKey, lines);
+  return lines;
+}
+
+function addCountedFile(stats, file, extension, lines) {
+  stats.totalLines += lines;
+  stats.countedFiles += 1;
+  stats.byFile.push({ path: file.path, lines });
+
+  if (!stats.byExtension[extension]) {
+    stats.byExtension[extension] = { files: 0, lines: 0 };
+  }
+
+  stats.byExtension[extension].files += 1;
+  stats.byExtension[extension].lines += lines;
+}
+
+function addSkippedFile(stats, filePath, reason) {
+  stats.numFilesSkipped += 1;
+  stats.filesSkipped.push(`${filePath} (${reason})`);
 }
 
 async function countLinesOfCode(owner, repo) {
   const stats = {
     totalLines: 0,
     totalFiles: 0,
+    countedFiles: 0,
     byExtension: {},
+    byFile: [],
     numFilesSkipped: 0,
     filesSkipped: [],
   };
-  try {
-    const repoData = await fetchGithubRepoData(owner, repo);
-    const defaultBranch = repoData.default_branch;
 
-    // Getting root tree - check cache first
-    const treeCacheKey = `cache_tree_${owner}_${repo}_${defaultBranch}`;
-    let treeData = await cacheManager.get(treeCacheKey);
-    try {
-      if (!treeData) {
-        const url = `https://api.github.com/repos/${owner}/${repo}/git/trees/${defaultBranch}?recursive=1`;
-        const treeResponse = await fetch(url, { headers: getHeaders() });
+  const repoData = await fetchGithubRepoData(owner, repo);
+  const treeData = await fetchRepositoryTree(
+    owner,
+    repo,
+    repoData.default_branch,
+  );
+  const files = treeData.tree.filter((item) => item.type === "blob");
+  const exclusions = await getFileExclusions();
 
-        // Update rate limit display after API call
-        updateRateLimitDisplay();
+  stats.totalFiles = files.length;
+  let processedFiles = 0;
+  const batchSize = config.github.useAuth ? 4 : 1;
 
-        if (!treeResponse.ok) {
-          // Handle rate limiting
-          if (
-            treeResponse.status === 403 &&
-            treeResponse.headers.get("X-RateLimit-Remaining") === "0"
-          ) {
-            const resetTime = new Date(
-              parseInt(treeResponse.headers.get("X-RateLimit-Reset")) * 1000
-            );
-            throw new Error(
-              `GitHub API rate limit exceeded. Resets at ${resetTime.toLocaleTimeString()}`
-            );
+  for (let index = 0; index < files.length; index += batchSize) {
+    const batch = files.slice(index, index + batchSize);
+
+    await Promise.all(
+      batch.map(async (file) => {
+        const extension = getFileExtension(file.path);
+        const skipReason = getSkipReason(file, extension, exclusions);
+
+        if (skipReason) {
+          addSkippedFile(stats, file.path, skipReason);
+          return;
+        }
+
+        try {
+          const lines = await countLinesInFile(owner, repo, file, extension);
+          addCountedFile(stats, file, extension, lines);
+        } catch (error) {
+          if (error instanceof RateLimitError || error.name === "RateLimitError") {
+            throw error;
           }
-          throw new Error(`Error fetching tree: ${treeResponse.statusText}`);
+
+          console.warn(`Could not process ${file.path}:`, error);
+          addSkippedFile(stats, file.path, error.message);
         }
+      }),
+    );
 
-        treeData = await treeResponse.json();
-        await cacheManager.set(treeCacheKey, treeData);
+    processedFiles += batch.length;
+    updateProgress(processedFiles, files.length);
+  }
 
-        if (treeData.truncated) {
-          showError("Repository is too large. Response will be partial.");
-        }
-      }
-    } catch (error) {
-      showError("Error fetching tree data. Please try again later.");
-      return;
-    }
+  stats.byFile.sort((a, b) => b.lines - a.lines || a.path.localeCompare(b.path));
+  displayStats(stats);
+  return stats;
+}
 
-    const files = treeData.tree.filter((item) => item.type === "blob");
-    const fileCount = files.length;
-
-    let processedFiles = 0;
-    const batchSize = 4; // number of files to process in each batch
-    for (let i = 0; i < files.length; i += batchSize) {
-      const batch = files.slice(i, i + batchSize);
-      await Promise.all(
-        batch.map((file) => {
-          return countLinesInFile(owner, repo, file, stats);
-        })
-      );
-      processedFiles += batch.length;
-      updateProgress(processedFiles, fileCount);
-
-      // Update rate limit every few batches to avoid too many requests
-      if (i % (batchSize * 5) === 0) {
-        updateRateLimitDisplay();
-      }
-
-      const delay = config.github.useAuth ? 50 : 100; // Less delay if authenticated
-      await new Promise((resolve) => setTimeout(resolve, delay)); // Delay to avoid hitting rate limits
-    }
-
-    displayStats(stats);
-    // Final rate limit update when finished
-    updateRateLimitDisplay();
+async function analyzeRepository(owner, repo) {
+  try {
+    return await countLinesOfCode(owner, repo);
   } catch (error) {
-    showError(`Error counting lines of code: ${error.message}`);
+    if (error instanceof RateLimitError || error.name === "RateLimitError") {
+      showError(error.message);
+      return null;
+    }
+
+    showError(`Analysis failed: ${error.message}`);
+    return null;
   } finally {
     console.log("Finished counting lines of code.");
   }
 }
 
-async function countLinesInFile(owner, repo, file, stats) {
-  const filePath = file.path;
-  const fileExtension = getFileExtension(filePath);
-
-  // Get exclusions from storage
-  const exclusionsResult = await new Promise((resolve) => {
-    chrome.storage.local.get("fileExclusions", (result) => {
-      resolve(result.fileExclusions || []);
-    });
-  });
-
-  // Skip if the file extension is in the exclusions list
-  if (exclusionsResult.includes(fileExtension)) {
-    stats.totalFiles++;
-    stats.numFilesSkipped++;
-    stats.filesSkipped.push(`${filePath} (excluded by user)`);
-    return;
-  }
-
-  // Skip binary files and large files
-  if (
-    isBinaryExtension(fileExtension) ||
-    file.size > 1000000 ||
-    fileExtension === "no-extension"
-  ) {
-    stats.totalFiles++;
-    stats.numFilesSkipped++;
-    stats.filesSkipped.push(filePath);
-    return;
-  }
-
-  try {
-    // Check cache for file content
-    const fileContentCacheKey = `content_${owner}_${repo}_${file.sha}`;
-    let fileContent = await cacheManager.get(fileContentCacheKey);
-
-    if (!fileContent) {
-      fileContent = await getFileContent(owner, repo, file.sha);
-      await cacheManager.set(fileContentCacheKey, fileContent);
-    }
-
-    const lines = fileContent.split("\n").length;
-    stats.totalLines += lines;
-    stats.totalFiles++;
-
-    if (!stats.byExtension[fileExtension]) {
-      stats.byExtension[fileExtension] = {
-        files: 0,
-        lines: 0,
-      };
-    }
-
-    // Update stats for the file extension
-    stats.byExtension[fileExtension].files++;
-    stats.byExtension[fileExtension].lines += lines;
-  } catch (error) {
-    console.warn(`Could not process file ${filePath}: ${error.message}`);
-    stats.totalFiles++;
-    stats.numFilesSkipped++;
-    stats.filesSkipped.push(filePath);
-  }
-}
-
-async function getFileContent(owner, repo, sha) {
-  const url = `https://api.github.com/repos/${owner}/${repo}/git/blobs/${sha}`;
-  const response = await fetch(url, { headers: getHeaders() });
-
-  if (!response.ok) {
-    // Handle rate limiting
-    if (
-      response.status === 403 &&
-      response.headers.get("X-RateLimit-Remaining") === "0"
-    ) {
-      const resetTime = new Date(
-        parseInt(response.headers.get("X-RateLimit-Reset")) * 1000
-      );
-      throw new Error(
-        `GitHub API rate limit exceeded. Resets at ${resetTime.toLocaleTimeString()}`
-      );
-    }
-    throw new Error(`Error fetching file content: ${response.statusText}`);
-  }
-
-  const data = await response.json();
-  const decodedContent = atob(data.content); // decode base64 content
-  return decodedContent;
-}
-
-// Main execution function with authentication option
-function analyzeRepository(owner, repo, token = null) {
-  if (token) {
-    setGitHubToken(token);
-  }
-
-  fetchGithubRepoData(owner, repo)
-    .then(() => {
-      countLinesOfCode(owner, repo);
-    })
-    .catch((error) => {
-      showError(`Error fetching repository data: ${error.message}`);
-    });
-}
-
-// UI updates
 function updateProgress(processedFiles, totalFiles) {
   const progressBar = document.getElementById("progress-bar");
   const progressText = document.getElementById("progress-text");
+  const percentage =
+    totalFiles === 0
+      ? processedFiles > 0
+        ? 100
+        : 0
+      : Math.round((processedFiles / totalFiles) * 100);
 
-  if (progressBar && progressText) {
-    const percentage = Math.round((processedFiles / totalFiles) * 100);
-    progressBar.style.width = `${percentage}%`;
+  if (progressBar) progressBar.style.width = `${percentage}%`;
+  if (progressText) {
     progressText.textContent = `${percentage}% (${processedFiles}/${totalFiles} files)`;
   }
 }
 
 function displayStats(stats) {
-  // Get UI elements
   const resultsDiv = document.getElementById("results");
   const loadingDiv = document.getElementById("loading");
-  const totalLinesSpan = document.getElementById("totalLines");
-  const totalFilesSpan = document.getElementById("totalFiles");
-  const totalSkippedFilesSpan = document.getElementById("totalSkippedFiles");
+
+  document.getElementById("totalLines").textContent =
+    stats.totalLines.toLocaleString();
+  document.getElementById("totalFiles").textContent =
+    stats.totalFiles.toLocaleString();
+  document.getElementById("countedFiles").textContent =
+    stats.countedFiles.toLocaleString();
+  document.getElementById("totalSkippedFiles").textContent =
+    stats.numFilesSkipped.toLocaleString();
+
   const skippedFilesList = document.getElementById("skippedFiles");
-  const extensionsDiv = document.getElementById("extensions");
-
-  // Update UI with stats
-  if (totalLinesSpan)
-    totalLinesSpan.textContent = stats.totalLines.toLocaleString();
-  if (totalFilesSpan)
-    totalFilesSpan.textContent = stats.totalFiles.toLocaleString();
-  if (totalSkippedFilesSpan)
-    totalSkippedFilesSpan.textContent = stats.numFilesSkipped.toLocaleString();
-
-  // Update skipped files list
-  if (skippedFilesList) {
-    skippedFilesList.innerHTML = "";
-    if (stats.filesSkipped.length > 0) {
-      // Only show first 10 skipped files to avoid overflow
-      const filesToShow = stats.filesSkipped.slice(0, 10);
-      filesToShow.forEach((file) => {
-        const li = document.createElement("li");
-        li.textContent = file;
-        skippedFilesList.appendChild(li);
-      });
-
-      // Add indicator if there are more skipped files
-      if (stats.filesSkipped.length > 10) {
-        const li = document.createElement("li");
-        li.textContent = `...and ${stats.filesSkipped.length - 10} more`;
-        skippedFilesList.appendChild(li);
-      }
-    } else {
-      const li = document.createElement("li");
-      li.textContent = "None";
-      skippedFilesList.appendChild(li);
+  skippedFilesList.innerHTML = "";
+  const skippedToShow = stats.filesSkipped.slice(0, 20);
+  if (skippedToShow.length === 0) {
+    const item = document.createElement("li");
+    item.textContent = "None";
+    skippedFilesList.appendChild(item);
+  } else {
+    for (const file of skippedToShow) {
+      const item = document.createElement("li");
+      item.textContent = file;
+      skippedFilesList.appendChild(item);
+    }
+    if (stats.filesSkipped.length > skippedToShow.length) {
+      const item = document.createElement("li");
+      item.textContent = `...and ${stats.filesSkipped.length - skippedToShow.length} more`;
+      skippedFilesList.appendChild(item);
     }
   }
 
-  // Update extensions breakdown
-  if (extensionsDiv) {
-    extensionsDiv.innerHTML = "";
+  const extensionsDiv = document.getElementById("extensions");
+  extensionsDiv.innerHTML = "";
+  const sortedExtensions = Object.entries(stats.byExtension).sort(
+    (a, b) => b[1].lines - a[1].lines,
+  );
 
-    // Sort extensions by number of lines
-    const sortedExtensions = Object.entries(stats.byExtension).sort(
-      (a, b) => b[1].lines - a[1].lines
-    );
+  for (const [extension, data] of sortedExtensions) {
+    const percentage =
+      stats.totalLines === 0
+        ? "0.0"
+        : ((data.lines / stats.totalLines) * 100).toFixed(1);
+    const row = document.createElement("div");
+    row.className = "extension-row";
 
-    sortedExtensions.forEach(([ext, data]) => {
-      const percentage = ((data.lines / stats.totalLines) * 100).toFixed(1);
+    const name = document.createElement("span");
+    name.textContent = extension;
+    const values = document.createElement("span");
+    values.textContent = `${data.files.toLocaleString()} ${data.files === 1 ? "file" : "files"}, ${data.lines.toLocaleString()} lines (${percentage}%)`;
 
-      const row = document.createElement("div");
-      row.className = "extension-row";
-      const fileText = data.files === 1 ? "file" : "files";
-      row.innerHTML = `
-          <span>${ext}</span>
-          <span>${data.files.toLocaleString()} ${fileText}, ${data.lines.toLocaleString()} lines (${percentage}%)</span> 
-        `;
-
-      extensionsDiv.appendChild(row);
-    });
+    row.append(name, values);
+    extensionsDiv.appendChild(row);
   }
 
-  // Show results and hide loading
+  const filesDiv = document.getElementById("files");
+  filesDiv.innerHTML = "";
+  for (const file of stats.byFile) {
+    const row = document.createElement("div");
+    row.className = "file-row";
+
+    const path = document.createElement("span");
+    path.className = "file-path";
+    path.textContent = file.path;
+    path.title = file.path;
+
+    const lineCount = document.createElement("span");
+    lineCount.textContent = `${file.lines.toLocaleString()} lines`;
+
+    row.append(path, lineCount);
+    filesDiv.appendChild(row);
+  }
+
   if (loadingDiv) loadingDiv.style.display = "none";
   if (resultsDiv) resultsDiv.style.display = "block";
 }
 
-document.addEventListener("DOMContentLoaded", () => {
-  // Get UI elements for token management
-  const tokenInput = document.getElementById("githubToken");
-  const saveTokenButton = document.getElementById("saveToken");
-
-  const button = document.getElementById("countLoc");
-  const currentRepoDiv = document.getElementById("currentRepo");
+function showLoadingState() {
   const loadingDiv = document.getElementById("loading");
   const resultsDiv = document.getElementById("results");
   const errorDiv = document.getElementById("error");
 
-  const exclusionInput = document.getElementById("exclusionInput");
-  const addExclusionButton = document.getElementById("addExclusion");
-  const exclusionsList =
-    document.getElementById("exclusionsList") || createExclusionsList();
-
-  // Add token help link handler
-  const tokenHelpLink = document.getElementById("tokenHelpLink");
-  if (tokenHelpLink) {
-    tokenHelpLink.addEventListener("click", (e) => {
-      e.preventDefault();
-      // Open GitHub token creation page in a new tab
-      chrome.tabs.create({
-        url: "https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/creating-a-personal-access-token",
-      });
-    });
-  }
-
-  // Initialize exclusions array from storage
-  let fileExclusions = [];
-
-  // Load saved exclusions when popup opens
-  chrome.storage.local.get("fileExclusions", (result) => {
-    if (result.fileExclusions) {
-      fileExclusions = result.fileExclusions;
-      renderExclusions();
-    }
-  });
-
-  // Add exclusion when button is clicked
-  if (addExclusionButton) {
-    addExclusionButton.addEventListener("click", () => {
-      if (exclusionInput && exclusionInput.value.trim()) {
-        const extension = exclusionInput.value.trim().toLowerCase();
-        // Remove dot if user included it
-        const cleanExtension = extension.startsWith(".")
-          ? extension.substring(1)
-          : extension;
-
-        if (!fileExclusions.includes(cleanExtension)) {
-          fileExclusions.push(cleanExtension); // Add new exclusion if not already present
-          saveExclusions();
-          renderExclusions();
-        }
-        exclusionInput.value = "";
-      }
-    });
-  }
-
-  // Create exclusions list element if it doesn't exist
-  function createExclusionsList() {
-    const container = document.getElementById("exclusions-section");
-    if (container) {
-      const list = document.createElement("ul");
-      list.id = "exclusionsList";
-      container.appendChild(list);
-      return list;
-    }
-    return null;
-  }
-
-  // Save exclusions to storage
-  function saveExclusions() {
-    chrome.storage.local.set({ fileExclusions });
-  }
-
-  // Render the list of exclusions
-  function renderExclusions() {
-    if (!exclusionsList) return;
-
-    exclusionsList.innerHTML = "";
-    if (fileExclusions.length === 0) {
-      const emptyItem = document.createElement("li");
-      emptyItem.textContent = "No exclusions added";
-      exclusionsList.appendChild(emptyItem);
-    } else {
-      fileExclusions.forEach((extension) => {
-        const item = document.createElement("li");
-        item.textContent = `.${extension}`;
-
-        // Add remove button
-        const removeBtn = document.createElement("button");
-        removeBtn.textContent = "×";
-        removeBtn.className = "remove-exclusion";
-        removeBtn.addEventListener("click", () => {
-          fileExclusions = fileExclusions.filter((ext) => ext !== extension);
-          saveExclusions();
-          renderExclusions();
-        });
-
-        item.appendChild(removeBtn);
-        exclusionsList.appendChild(item);
-      });
-    }
-  }
-
-  // Initially hide results and loading
-  if (loadingDiv) loadingDiv.style.display = "none";
+  if (loadingDiv) loadingDiv.style.display = "block";
   if (resultsDiv) resultsDiv.style.display = "none";
   if (errorDiv) errorDiv.style.display = "none";
+  updateProgress(0, 0);
+}
 
-  updateRateLimitDisplay();
+function renderExclusions(exclusions) {
+  const list = document.getElementById("exclusionsList");
+  list.innerHTML = "";
 
-  // Load token from storage and update API rate limit display
-  loadToken().then(() => {
-    // Initial rate limit check after token is loaded
-    updateRateLimitDisplay();
-  });
-
-  initializeAuthChecks(); // Initialize authentication checks
-
-  // Add token save button handler
-  if (saveTokenButton) {
-    saveTokenButton.addEventListener("click", () => {
-      const token = tokenInput.value.trim();
-      if (token) {
-        saveToken(token);
-        tokenInput.value = ""; // Clear input field after saving
-      } else {
-        clearToken();
-      }
-    });
+  if (exclusions.length === 0) {
+    const item = document.createElement("li");
+    item.textContent = "No exclusions added";
+    list.appendChild(item);
+    return;
   }
 
-  // Check if we're on a GitHub repository page
-  const detectGitHubRepo = async () => {
+  for (const extension of exclusions) {
+    const item = document.createElement("li");
+    const label = document.createElement("span");
+    label.textContent = `.${extension}`;
+
+    const removeButton = document.createElement("button");
+    removeButton.type = "button";
+    removeButton.textContent = "×";
+    removeButton.className = "remove-exclusion";
+    removeButton.setAttribute("aria-label", `Remove .${extension} exclusion`);
+    removeButton.addEventListener("click", async () => {
+      const updated = exclusions.filter((value) => value !== extension);
+      await storageSet({ fileExclusions: updated });
+      exclusions.splice(0, exclusions.length, ...updated);
+      renderExclusions(exclusions);
+    });
+
+    item.append(label, removeButton);
+    list.appendChild(item);
+  }
+}
+
+document.addEventListener("DOMContentLoaded", async () => {
+  const tokenInput = document.getElementById("githubToken");
+  const saveTokenButton = document.getElementById("saveToken");
+  const clearTokenButton = document.getElementById("clearToken");
+  const countButton = document.getElementById("countLoc");
+  const currentRepoDiv = document.getElementById("currentRepo");
+  const exclusionInput = document.getElementById("exclusionInput");
+  const addExclusionButton = document.getElementById("addExclusion");
+  const tokenHelpLink = document.getElementById("tokenHelpLink");
+
+  let exclusions = [...(await getFileExclusions())];
+  renderExclusions(exclusions);
+
+  try {
+    await loadToken();
+  } catch (error) {
+    showError(`Could not load the saved token: ${error.message}`);
+  }
+  await updateRateLimitDisplay();
+
+  tokenHelpLink.addEventListener("click", (event) => {
+    event.preventDefault();
+    chrome.tabs.create({
+      url: "https://docs.github.com/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens",
+    });
+  });
+
+  saveTokenButton.addEventListener("click", async () => {
     try {
-      // Get current active tab
-      const [tab] = await chrome.tabs.query({
-        active: true,
-        currentWindow: true,
-      });
-
-      // Extract owner/repo from GitHub URL using regex
-      const match = tab.url.match(/github\.com\/([^\/]+)\/([^\/]+)/);
-
-      if (match) {
-        const [_, owner, repo] = match;
-        // Clean up repo name (remove any trailing slashes or query params)
-        const cleanRepo = repo.split(/[\/\?#]/)[0];
-
-        console.log(`Detected repo: ${owner}/${cleanRepo}`); // Debug log
-
-        // Update UI
-        if (currentRepoDiv)
-          currentRepoDiv.textContent = `Repository: ${owner}/${cleanRepo}`;
-        if (button) {
-          button.disabled = false;
-
-          button.replaceWith(button.cloneNode(true)); // Clone the button to remove old event listeners
-          // Reassign the button to the new cloned button
-          const newButton = document.getElementById("countLoc");
-
-          // Add click handler
-          newButton.addEventListener("click", () => {
-            // Show loading state
-            if (loadingDiv) loadingDiv.style.display = "block";
-            if (resultsDiv) resultsDiv.style.display = "none";
-            if (errorDiv) errorDiv.style.display = "none";
-
-            // Analyze the repository
-            analyzeRepository(owner, cleanRepo);
-          });
-        }
-      } else {
-        if (currentRepoDiv)
-          currentRepoDiv.textContent = "No GitHub repository detected";
-        if (button) button.disabled = true;
-      }
+      saveTokenButton.disabled = true;
+      await saveToken(tokenInput.value);
+      tokenInput.value = "";
+      await updateRateLimitDisplay();
     } catch (error) {
-      if (errorDiv) {
-        errorDiv.style.display = "block";
-        errorDiv.textContent = `Error: ${error.message}`;
-      }
+      showError(error.message);
+    } finally {
+      saveTokenButton.disabled = false;
     }
-  };
+  });
 
-  // Start the detection process
-  detectGitHubRepo();
+  clearTokenButton.addEventListener("click", async () => {
+    try {
+      await clearToken();
+      await cacheManager.clear();
+      await updateRateLimitDisplay();
+    } catch (error) {
+      showError(`Could not clear token: ${error.message}`);
+    }
+  });
+
+  addExclusionButton.addEventListener("click", async () => {
+    const enteredValue = exclusionInput.value.trim().toLowerCase();
+    const extension = enteredValue.startsWith(".")
+      ? enteredValue.slice(1)
+      : enteredValue;
+
+    if (!extension || exclusions.includes(extension)) return;
+
+    exclusions.push(extension);
+    exclusions.sort();
+    await storageSet({ fileExclusions: exclusions });
+    renderExclusions(exclusions);
+    exclusionInput.value = "";
+  });
+
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const match = tab?.url?.match(
+      /^https?:\/\/github\.com\/([^/]+)\/([^/?#]+)(?:[/?#]|$)/,
+    );
+
+    if (!match) {
+      currentRepoDiv.textContent = "No GitHub repository detected";
+      countButton.disabled = true;
+      return;
+    }
+
+    const owner = match[1];
+    const repo = match[2].replace(/\.git$/, "");
+    currentRepoDiv.textContent = `Repository: ${owner}/${repo}`;
+    countButton.disabled = false;
+
+    countButton.addEventListener("click", async () => {
+      showLoadingState();
+      countButton.disabled = true;
+      const originalText = countButton.textContent;
+      countButton.textContent = "Counting…";
+
+      await analyzeRepository(owner, repo);
+
+      countButton.textContent = originalText;
+      countButton.disabled = false;
+    });
+  } catch (error) {
+    showError(`Could not detect the current repository: ${error.message}`);
+  }
 });

@@ -1,242 +1,198 @@
-//CACHING
-const STORAGE_LIMIT = 5 * 1024 * 1024; // 5MB limit by default
+const STORAGE_LIMIT = 8 * 1024 * 1024;
 const CACHE_PREFIX = "cache_";
 
+function storageGet(keys) {
+  return new Promise((resolve, reject) => {
+    chrome.storage.local.get(keys, (result) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      resolve(result);
+    });
+  });
+}
+
+function storageSet(items) {
+  return new Promise((resolve, reject) => {
+    chrome.storage.local.set(items, () => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
+function storageRemove(keys) {
+  return new Promise((resolve, reject) => {
+    chrome.storage.local.remove(keys, () => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
+function getBytesInUse(keys) {
+  return new Promise((resolve, reject) => {
+    chrome.storage.local.getBytesInUse(keys, (bytes) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      resolve(bytes);
+    });
+  });
+}
+
+async function getCacheKeys() {
+  const items = await storageGet(null);
+  return Object.keys(items).filter((key) => key.startsWith(CACHE_PREFIX));
+}
+
 export const cacheManager = {
-  // Cache expiration time (1 hour in milliseconds)
-  expirationMs: 3600000,
+  expirationMs: 60 * 60 * 1000,
   estimatedSize: 0,
 
-  // Initialize cache manager and calculate size
-  init: async function () {
+  async init() {
+    await this.cleanExpiredCache();
     await this.calculateCacheSize();
     console.log(
-      `Initial cache size: ${(this.estimatedSize / 1024 / 1024).toFixed(2)}MB`
+      `Initial cache size: ${(this.estimatedSize / 1024 / 1024).toFixed(2)}MB`,
     );
   },
 
-  // Calculate approximate size of all cached items
-  calculateCacheSize: async function () {
-    return new Promise((resolve) => {
-      chrome.storage.local.get(null, (items) => {
-        let totalSize = 0;
-        // Check all items with cache prefix
-        for (const key in items) {
-          if (key.startsWith(CACHE_PREFIX)) {
-            const jsonString = JSON.stringify(items[key]);
-            totalSize += jsonString.length * 2; // Rough estimate (2 bytes per char)
-          }
-        }
-        this.estimatedSize = totalSize;
-        resolve(totalSize);
-      });
-    });
+  async calculateCacheSize() {
+    const keys = await getCacheKeys();
+    this.estimatedSize = keys.length > 0 ? await getBytesInUse(keys) : 0;
+    return this.estimatedSize;
   },
 
-  // Get estimated size of a value in bytes
-  getItemSize: function (value) {
-    const jsonString = JSON.stringify({
-      timestamp: Date.now(),
-      data: value,
-    });
-    return jsonString.length * 2; // Rough estimate (2 bytes per char)
+  async get(key) {
+    if (!key.startsWith(CACHE_PREFIX)) {
+      throw new Error(`Invalid cache key: ${key}`);
+    }
+
+    const result = await storageGet([key]);
+    const cachedItem = result[key];
+    if (!cachedItem) return null;
+
+    const isExpired =
+      !cachedItem.timestamp ||
+      Date.now() - cachedItem.timestamp > this.expirationMs;
+
+    if (isExpired) {
+      await this.remove(key);
+      return null;
+    }
+
+    console.log(`Cache hit: ${key}`);
+    return cachedItem.data;
   },
 
-  // Check if we're close to storage limit
-  isStorageFull: function (additionalBytes = 0) {
-    return this.estimatedSize + additionalBytes > STORAGE_LIMIT;
-  },
-
-  // Get data from cache
-  get: function (key) {
-    return new Promise((resolve) => {
-      chrome.storage.local.get([key], (result) => {
-        if (!result[key]) {
-          resolve(null); // Return null if no cache found
-          return;
-        }
-
-        const cachedItem = result[key];
-        const cacheAge = Date.now() - cachedItem.timestamp;
-
-        console.log(
-          `Cache age for ${key}: ${Math.round(cacheAge / 60000)} minutes`
-        );
-
-        // Check if cache is expired
-        if (cacheAge > this.expirationMs) {
-          this.remove(key);
-          resolve(null);
-          return;
-        }
-
-        console.log(`Cache hit: ${key}`);
-        resolve(cachedItem.data);
-      });
-    });
-  },
-
-  set: async function (key, data) {
-    const itemSize = this.getItemSize(data);
-
-    // Check if adding this would exceed storage limit
-    if (this.isStorageFull(itemSize)) {
-      console.warn(
-        `Cache storage limit (${
-          STORAGE_LIMIT / 1024 / 1024
-        }MB) would be exceeded. Not caching: ${key}`
-      );
-
-      // Try to free up some space
-      const success = await this.makeRoom(itemSize);
-      if (!success) {
-        console.warn("Could not free enough space in cache. Item not cached.");
-        return false;
-      }
+  async set(key, data) {
+    if (!key.startsWith(CACHE_PREFIX)) {
+      throw new Error(`Invalid cache key: ${key}`);
     }
 
     const cacheItem = {
       timestamp: Date.now(),
-      expires: Date.now() + this.expirationMs,
-      data: data,
+      data,
     };
 
-    return new Promise((resolve) => {
-      chrome.storage.local.set({ [key]: cacheItem }, () => {
-        // Update our size tracking
-        this.estimatedSize += itemSize;
-        console.log(
-          `Cached: ${key} (size: ${(itemSize / 1024).toFixed(
-            2
-          )}KB, expires: ${new Date(cacheItem.expires).toLocaleTimeString()})`
-        );
-        resolve(true);
-      });
-    });
-  },
+    const oldSize = await getBytesInUse([key]);
+    const estimatedNewSize = JSON.stringify({ [key]: cacheItem }).length * 2;
+    const additionalBytes = Math.max(0, estimatedNewSize - oldSize);
 
-  // Try to free up space by removing oldest cache entries
-  makeRoom: async function (neededBytes) {
-    return new Promise((resolve) => {
-      chrome.storage.local.get(null, (items) => {
-        // Find cache items
-        const cacheItems = [];
-        for (const key in items) {
-          if (key.startsWith(CACHE_PREFIX)) {
-            cacheItems.push({
-              key: key,
-              timestamp: items[key].timestamp,
-              size: JSON.stringify(items[key]).length * 2,
-            });
-          }
-        }
-
-        // Sort by oldest first
-        cacheItems.sort((a, b) => a.timestamp - b.timestamp);
-
-        let removedSize = 0;
-        let keysToRemove = [];
-
-        // Start removing oldest items until we have enough space
-        for (const item of cacheItems) {
-          keysToRemove.push(item.key);
-          removedSize += item.size;
-
-          // If we've freed enough space, stop
-          if (removedSize >= neededBytes) {
-            break;
-          }
-        }
-
-        if (keysToRemove.length > 0) {
-          chrome.storage.local.remove(keysToRemove, () => {
-            console.log(
-              `Evicted ${keysToRemove.length} oldest cache items to free up space`
-            );
-            this.estimatedSize -= removedSize;
-            resolve(true);
-          });
-        } else {
-          resolve(false);
-        }
-      });
-    });
-  },
-
-  // Remove item from cache
-  remove: function (key) {
-    return new Promise((resolve) => {
-      // First get the item to calculate its size
-      chrome.storage.local.get([key], (result) => {
-        if (result[key]) {
-          const itemSize = JSON.stringify(result[key]).length * 2;
-
-          chrome.storage.local.remove([key], () => {
-            console.log(`Cache removed: ${key}`);
-            this.estimatedSize -= itemSize;
-            resolve(true);
-          });
-        } else {
-          resolve(false);
-        }
-      });
-    });
-  },
-
-  // Clear entire cache
-  clear: function () {
-    return new Promise((resolve) => {
-      chrome.storage.local.get(null, (items) => {
-        // Filter only cache items
-        const cacheKeys = Object.keys(items).filter((key) =>
-          key.startsWith(CACHE_PREFIX)
-        );
-
-        if (cacheKeys.length > 0) {
-          chrome.storage.local.remove(cacheKeys, () => {
-            console.log(`Cache cleared: ${cacheKeys.length} items removed`);
-            this.estimatedSize = 0;
-            resolve(true);
-          });
-        } else {
-          resolve(false); // No cache items to clear
-        }
-      });
-    });
-  },
-
-  // Periodically clean expired cache
-  cleanExpiredCache: function () {
-    chrome.storage.local.get(null, (items) => {
-      const now = Date.now();
-      const keysToRemove = [];
-
-      for (const key in items) {
-        if (key.startsWith(CACHE_PREFIX) && items[key].timestamp) {
-          if (now - items[key].timestamp > this.expirationMs) {
-            keysToRemove.push(key);
-          }
-        }
+    if (this.estimatedSize + additionalBytes > STORAGE_LIMIT) {
+      const madeRoom = await this.makeRoom(additionalBytes);
+      if (!madeRoom) {
+        console.warn(`Cache is full. Not caching ${key}.`);
+        return false;
       }
+    }
 
-      if (keysToRemove.length > 0) {
-        chrome.storage.local.remove(keysToRemove, () => {
-          console.log(
-            `Auto-cleaned ${keysToRemove.length} expired cache items`
-          );
-        });
-      }
-    });
+    await storageSet({ [key]: cacheItem });
+    const newSize = await getBytesInUse([key]);
+    this.estimatedSize = Math.max(0, this.estimatedSize - oldSize + newSize);
+    return true;
+  },
+
+  async makeRoom(neededBytes) {
+    const items = await storageGet(null);
+    const cacheItems = Object.entries(items)
+      .filter(([key]) => key.startsWith(CACHE_PREFIX))
+      .map(([key, value]) => ({
+        key,
+        timestamp: value.timestamp ?? 0,
+        approximateSize: JSON.stringify({ [key]: value }).length * 2,
+      }))
+      .sort((a, b) => a.timestamp - b.timestamp);
+
+    const keysToRemove = [];
+    let removedBytes = 0;
+
+    for (const item of cacheItems) {
+      keysToRemove.push(item.key);
+      removedBytes += item.approximateSize;
+      if (removedBytes >= neededBytes) break;
+    }
+
+    if (keysToRemove.length === 0) return false;
+
+    await storageRemove(keysToRemove);
+    await this.calculateCacheSize();
+    return true;
+  },
+
+  async remove(key) {
+    const oldSize = await getBytesInUse([key]);
+    await storageRemove([key]);
+    this.estimatedSize = Math.max(0, this.estimatedSize - oldSize);
+    return oldSize > 0;
+  },
+
+  async clear() {
+    const keys = await getCacheKeys();
+    if (keys.length === 0) return false;
+
+    await storageRemove(keys);
+    this.estimatedSize = 0;
+    return true;
+  },
+
+  async cleanExpiredCache() {
+    const items = await storageGet(null);
+    const now = Date.now();
+    const keysToRemove = Object.entries(items)
+      .filter(([key, value]) => {
+        return (
+          key.startsWith(CACHE_PREFIX) &&
+          (!value.timestamp || now - value.timestamp > this.expirationMs)
+        );
+      })
+      .map(([key]) => key);
+
+    if (keysToRemove.length > 0) {
+      await storageRemove(keysToRemove);
+      console.log(`Removed ${keysToRemove.length} expired cache entries.`);
+    }
+
+    await this.calculateCacheSize();
+    return keysToRemove.length;
   },
 };
 
-// Initialize cache manager on load
-cacheManager.init().then(() => {
-  // Clean expired cache on startup
-  cacheManager.cleanExpiredCache();
-
-  // Set up periodic cache cleaning (every 15 minutes)
-  setInterval(() => {
-    cacheManager.cleanExpiredCache();
-  }, 15 * 60 * 1000);
+cacheManager.init().catch((error) => {
+  console.error("Cache initialization failed:", error);
 });
+
+setInterval(() => {
+  cacheManager.cleanExpiredCache().catch((error) => {
+    console.error("Cache cleanup failed:", error);
+  });
+}, 15 * 60 * 1000);

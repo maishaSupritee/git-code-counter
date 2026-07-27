@@ -1,82 +1,78 @@
-<!DOCTYPE html>
-<html>
+<!doctype html>
+<html lang="en">
   <head>
+    <meta charset="utf-8" />
     <title>GitHub Code Counter</title>
     <link rel="stylesheet" href="popup.css" />
   </head>
   <body>
-    <div class="header">
+    <header class="header">
       <h2>GitHub Code Counter</h2>
-    </div>
+    </header>
 
     <div class="repo-info">
       <div id="currentRepo">No GitHub repository detected</div>
     </div>
 
-    <div class="settings-section">
-      <h3>GitHub Authentication</h3>
+    <section class="settings-section">
+      <h3>GitHub authentication</h3>
       <p class="info-text">
-        Authenticate to increase API rate limits (recommended)
+        A token raises the API limit and permits private-repository access.
       </p>
 
       <div class="token-input">
         <input
           type="password"
           id="githubToken"
-          placeholder="GitHub Personal Access Token"
+          placeholder="GitHub personal access token"
+          autocomplete="off"
         />
-        <button id="saveToken">Save Token</button>
+        <button type="button" id="saveToken">Save</button>
+        <button type="button" id="clearToken" class="secondary-button">
+          Clear
+        </button>
       </div>
 
       <p class="helper-text">
-        <a href="#" id="tokenHelpLink">How to create a GitHub token?</a>
+        <a href="#" id="tokenHelpLink">How to create a GitHub token</a>
       </p>
-
-      <div class="token-help">
-        <p class="info-text">
-          For private repositories, create a token with the
-          <code>repo</code> scope.
-        </p>
-        <p class="info-text">
-          For public repositories only, the <code>public_repo</code> scope is
-          sufficient.
-        </p>
-      </div>
+      <p class="info-text">
+        Fine-grained token: select the repository and grant
+        <strong>Contents: Read-only</strong>.
+      </p>
 
       <div id="auth-status" class="auth-status">
         <span class="status-circle unauthenticated"></span>
         <span id="auth-text">Not authenticated</span>
       </div>
-    </div>
-    <div class="API-section">
-      <p class="api-text">
-        API hits remaining: <span id="api-remaining">0</span>
-      </p>
-      <p class="api-text">
-        API Rate limit reset time: <span id="api-resetTime">0</span>
-      </p>
-    </div>
+    </section>
 
-    <div id="exclusions-section">
-      <h3>File Exclusions</h3>
-      <p>Exclude files from the analysis (optional)</p>
+    <section class="api-section">
+      <p class="api-text">
+        Primary API requests remaining:
+        <span id="api-remaining">Checking…</span>
+      </p>
+      <p class="api-text">
+        Limit resets: <span id="api-resetTime">Checking…</span>
+      </p>
+    </section>
+
+    <section id="exclusions-section">
+      <h3>File exclusions</h3>
+      <p>Exclude extensions from analysis.</p>
       <div class="exclusion-input">
-        <input
-          type="text"
-          id="exclusionInput"
-          placeholder="e.g. 'md', 'txt', 'js'"
-        />
-        <button id="addExclusion">Add Exclusion</button>
+        <input type="text" id="exclusionInput" placeholder="md, txt, js" />
+        <button type="button" id="addExclusion">Add</button>
       </div>
       <ul id="exclusionsList"></ul>
-    </div>
+    </section>
 
     <div class="button-div">
-      <button id="countLoc" disabled>Count Lines of Code</button>
+      <button type="button" id="countLoc" disabled>Count lines of code</button>
     </div>
 
     <div id="loading" class="loading">
-      <p>Analyzing repository... <span id="progress-text">0%</span></p>
+      <p>Analyzing repository… <span id="progress-text">0%</span></p>
       <div class="progress">
         <div id="progress-bar" class="progress-bar"></div>
       </div>
@@ -84,34 +80,40 @@
 
     <div id="error" class="error"></div>
 
-    <div id="results" class="results">
-      <h3>Repository Statistics</h3>
-      <div class="stat" id="totalLinesDiv">
-        <span>Total Lines of Code:</span>
+    <section id="results" class="results">
+      <h3>Repository statistics</h3>
+      <div class="stat total-lines">
+        <span>Total physical lines:</span>
         <span id="totalLines">0</span>
       </div>
       <div class="stat">
-        <span>Total Files:</span>
+        <span>Files found:</span>
         <span id="totalFiles">0</span>
       </div>
       <div class="stat">
-        <span>Total files skipped:</span>
-        <span id="totalSkippedFiles">0</span>
+        <span>Files counted:</span>
+        <span id="countedFiles">0</span>
       </div>
       <div class="stat">
-        <span>Skipped Files:</span>
-        <ul id="skippedFiles">
-          <li>None</li>
-        </ul>
+        <span>Files skipped:</span>
+        <span id="totalSkippedFiles">0</span>
       </div>
 
-      <h3>By Extension</h3>
-      <div id="extensions" class="extensions"></div>
-    </div>
+      <details>
+        <summary>Skipped-file details</summary>
+        <ul id="skippedFiles"><li>None</li></ul>
+      </details>
 
-    <a href="privacy-policy.html" target="_blank" class="privacy-link"
-      >Privacy Policy</a
-    >
+      <h3>By extension</h3>
+      <div id="extensions" class="scroll-list"></div>
+
+      <h3>By file</h3>
+      <div id="files" class="scroll-list"></div>
+    </section>
+
+    <a href="privacy-policy.html" target="_blank" class="privacy-link">
+      Privacy policy
+    </a>
 
     <script type="module" src="script.js"></script>
   </body>

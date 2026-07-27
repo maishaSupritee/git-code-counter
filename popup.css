@@ -1,18 +1,25 @@
 html {
   border-radius: 8px;
 }
+
 body {
-  width: 350px;
-  padding: 10px;
+  width: 390px;
+  padding: 12px;
   font-family: Arial, sans-serif;
   border-radius: 8px;
 }
+
+h3 {
+  margin-bottom: 8px;
+}
+
 .header {
   display: flex;
   align-items: center;
   margin-bottom: 15px;
   color: #6d5691;
 }
+
 .header h2 {
   margin: 0;
   font-size: 18px;
@@ -21,22 +28,27 @@ body {
 .repo-info {
   margin-bottom: 15px;
   font-size: 14px;
+  overflow-wrap: anywhere;
 }
+
 .loading {
   display: none;
   margin: 10px 0;
 }
+
 .progress {
   margin-top: 5px;
   width: 100%;
   height: 5px;
   background-color: #eee;
 }
+
 .progress-bar {
   height: 100%;
   width: 0;
   background-color: #4caf50;
 }
+
 button {
   background-color: #2ea44f;
   color: white;
@@ -45,42 +57,75 @@ button {
   border-radius: 6px;
   cursor: pointer;
 }
+
 button:disabled {
   background-color: #94d3a2;
   cursor: not-allowed;
 }
+
+.secondary-button {
+  background-color: #6d5691;
+}
+
 .results {
   margin-top: 15px;
   display: none;
 }
+
 .stat {
   display: flex;
   justify-content: space-between;
-  margin-bottom: 5px;
+  gap: 12px;
+  margin-bottom: 6px;
 }
-.extensions {
-  max-height: 200px;
-  overflow-y: auto;
-  margin-top: 10px;
-}
-.extension-row {
-  display: flex;
-  justify-content: space-between;
-  margin-bottom: 3px;
-  font-size: 13px;
-}
-.error {
-  color: red;
-  display: none;
-  margin-top: 5px;
-}
-#totalLinesDiv {
+
+.total-lines {
   padding: 10px;
   background-color: #ece3fa;
   border-radius: 6px;
   color: black;
   font-size: 14px;
   font-weight: bold;
+}
+
+.scroll-list {
+  max-height: 210px;
+  overflow-y: auto;
+  margin-top: 10px;
+  border: 1px solid #eee;
+  border-radius: 5px;
+}
+
+.extension-row,
+.file-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 8px;
+  border-bottom: 1px solid #eee;
+  font-size: 12px;
+}
+
+.extension-row:last-child,
+.file-row:last-child {
+  border-bottom: 0;
+}
+
+.file-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.error {
+  color: #b42318;
+  background: #fef3f2;
+  border: 1px solid #fecdca;
+  border-radius: 5px;
+  padding: 8px;
+  display: none;
+  margin-top: 8px;
 }
 
 .settings-section {
@@ -93,43 +138,45 @@ button:disabled {
 .info-text {
   font-size: 12px;
   color: #666;
-  margin-bottom: 2px;
-  margin-top: 2px;
+  margin: 3px 0;
 }
 
-.token-input {
+.token-input,
+.exclusion-input {
   display: flex;
-  margin-bottom: 10px;
-  margin-top: 10px;
+  gap: 4px;
+  margin: 10px 0;
 }
 
-.token-input input {
+.token-input input,
+.exclusion-input input {
+  min-width: 0;
   flex-grow: 1;
   padding: 8px;
   border: 1px solid #ddd;
-  border-radius: 4px 0 0 4px;
+  border-radius: 4px;
 }
 
-.token-input button {
-  padding: 8px 12px;
-  background-color: #6d5691;
-  color: white;
-  border: none;
-  border-radius: 0 4px 4px 0;
-  cursor: pointer;
+.helper-text {
+  font-size: 12px;
+  margin: 4px 0 8px;
 }
 
-.token-input button:hover {
-  background-color: #503f6b;
+.helper-text a,
+.privacy-link {
+  color: #5c02e8;
+  text-decoration: none;
 }
 
-.token-help {
-  margin-top: 5px;
-  margin-bottom: 10px;
+.helper-text a:hover,
+.privacy-link:hover {
+  text-decoration: underline;
 }
+
 .auth-status {
   display: flex;
   align-items: center;
+  margin-top: 8px;
   font-size: 12px;
 }
 
@@ -151,8 +198,7 @@ button:disabled {
 .api-text {
   font-size: 12px;
   color: #666;
-  margin-bottom: 2px;
-  margin-top: 4px;
+  margin: 4px 0;
 }
 
 #api-remaining {
@@ -161,31 +207,8 @@ button:disabled {
 }
 
 #api-resetTime {
-  color: #2cbb5d;
+  color: #2c7a3f;
   font-weight: bold;
-}
-
-.exclusion-section {
-  margin-bottom: 10px;
-}
-
-#addExclusion {
-  background-color: #6d5691;
-  color: white;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  height: 30px;
-}
-#addExclusion:hover {
-  background-color: #503f6b;
-}
-
-.exclusion-input input {
-  height: 25px;
-  border-radius: 4px;
-  border: 1px solid #ddd;
-  flex-grow: 1;
 }
 
 #exclusionsList {
@@ -213,25 +236,16 @@ button:disabled {
   padding: 0 6px;
 }
 
-.helper-text {
-  font-size: 0.85rem;
-  margin-top: 0px;
-  margin-bottom: 0;
-}
-
-.helper-text a {
-  color: #5c02e8;
-  text-decoration: none;
-}
-
-.helper-text a:hover {
-  text-decoration: underline;
-}
-
-.privacy-link {
-  color: #5c02e8;
-}
-
 .button-div {
-  margin-bottom: 10px;
+  margin: 12px 0 10px;
+}
+
+details {
+  font-size: 12px;
+  margin-top: 8px;
+}
+
+#skippedFiles {
+  padding-left: 20px;
+  overflow-wrap: anywhere;
 }
