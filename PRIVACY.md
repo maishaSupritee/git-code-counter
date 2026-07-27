@@ -8,7 +8,14 @@ GitHub Code Counter is a browser extension that counts lines of code in GitHub r
 
 Our extension collects the following information:
 
-- GitHub Personal Access Token (optional): If provided by you, we store this token locally on your device to authenticate API requests to GitHub. This helps avoid rate limiting and enables access to your private repositories. The token is automatically deleted after one hour.
+- GitHub Personal Access Token (optional): If provided by you, we store this token locally on your device to authenticate API requests to GitHub.
+- The personal access token is optional.
+- It is stored in Chrome’s local extension storage.
+- It is sent only to GitHub’s API.
+- It is not sent to your own server.
+- Repository metadata and numeric line counts are temporarily cached.
+- Complete source files are not intentionally retained.
+- You can clear the saved token.
 - Cached Repository Data: The extension temporarily stores repository data in your browser's local storage to improve performance and reduce API calls to GitHub. This cache is automatically cleared after one hour.
 - File Extension Exclusion Preferences: Your preferences for excluding certain file types from code counting are stored locally.
 
@@ -22,7 +29,7 @@ This extension makes requests to the GitHub API to retrieve repository data. The
 
 ## Data Retention
 
-Cached repository data and the Github personal token, is automatically cleared after one hour. Your extension preferences remain stored until you explicitly remove them or uninstall the extension.
+Cached repository data is automatically cleared after one hour. Your personal access token and extension preferences remain stored until you explicitly remove them or uninstall the extension.
 
 ## Contact
 
